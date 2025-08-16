@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build-test-lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # Honor rust-toolchain.toml (pin to your chosen version, e.g., 1.85.0)
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --workspace --locked
+
+      - name: Test
+        run: cargo test --workspace --locked
+
+      - name: Security advisories (cargo-audit)
+        run: |
+          cargo install --locked cargo-audit || true
+          cargo audit -D warnings
+
+      - name: License/deps policy (cargo-deny)
+        run: |
+          cargo install --locked cargo-deny || true
+          cargo deny check licenses bans sources advisories
