@@ -1,0 +1,13 @@
+[package]
+name = "whistle-bench"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dev-dependencies]
+criterion = "0.5"
+whistle = { path = "../whistle" }
+
+[[bench]]
+name = "whistle_core"
+harness = false
