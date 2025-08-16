@@ -1,0 +1,16 @@
+[package]
+name = "whistle"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0 OR MIT"
+description = "Per-symbol deterministic matching engine"
+
+[lib]
+path = "src/lib.rs"
+
+[features]
+default = []
+profile_validation = []
+profile_match = []
+
+[dependencies]
