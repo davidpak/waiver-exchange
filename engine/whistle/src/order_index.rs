@@ -1,9 +1,12 @@
 #![allow(dead_code)]
 
-use crate::{OrderHandle, OrderId, H_NONE};
+use crate::{H_NONE, OrderHandle, OrderId};
 
 #[derive(Clone, Copy, Debug)]
-struct Entry { key: u64, val: u32 } // key=0 => EMPTY, key=1 => TOMBSTONE
+struct Entry {
+    key: u64,
+    val: u32,
+} // key=0 => EMPTY, key=1 => TOMBSTONE
 
 const EMPTY: u64 = 0;
 const TOMBSTONE: u64 = 1;
@@ -26,7 +29,10 @@ pub struct OrderIndex {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum InsertErr { Full, Duplicate }
+pub enum InsertErr {
+    Full,
+    Duplicate,
+}
 
 impl OrderIndex {
     // cap_pow2 must be a power of two >= 8. Recommend >= 2x peak open orders
@@ -34,13 +40,24 @@ impl OrderIndex {
         assert!(cap_pow2.is_power_of_two() && cap_pow2 >= 8, "capacity must be pow2 >= 8");
         Self {
             mask: cap_pow2 - 1,
-            tabs: vec![Entry { key: EMPTY, val: 0}; cap_pow2].into_boxed_slice(),
-            len: 0, tombs: 0,
+            tabs: vec![Entry { key: EMPTY, val: 0 }; cap_pow2].into_boxed_slice(),
+            len: 0,
+            tombs: 0,
         }
     }
 
-    #[inline] pub fn capacity(&self) -> usize { self.tabs.len() }
-    #[inline] pub fn len(&self) -> usize { self.len }
+    #[inline]
+    pub fn capacity(&self) -> usize {
+        self.tabs.len()
+    }
+    #[inline]
+    pub fn len(&self) -> usize {
+        self.len
+    }
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
 
     pub fn insert(&mut self, key: OrderId, h: OrderHandle) -> Result<(), InsertErr> {
         assert!(key != EMPTY && key != TOMBSTONE, "reserved keys");
@@ -53,12 +70,16 @@ impl OrderIndex {
             if e.key == EMPTY {
                 let slot = first_tomb.unwrap_or(idx);
                 self.tabs[slot] = Entry { key, val: h.0 };
-                if first_tomb.is_some() { self.tombs -= 1; }
+                if first_tomb.is_some() {
+                    self.tombs -= 1;
+                }
                 self.len += 1;
                 return Ok(());
             }
             if e.key == TOMBSTONE {
-                if first_tomb.is_none() { first_tomb = Some(idx); }
+                if first_tomb.is_none() {
+                    first_tomb = Some(idx);
+                }
             } else if e.key == key {
                 return Err(InsertErr::Duplicate);
             }
@@ -71,22 +92,32 @@ impl OrderIndex {
     }
 
     pub fn get(&self, key: OrderId) -> Option<OrderHandle> {
-        if key == EMPTY || key == TOMBSTONE { return None; }
+        if key == EMPTY || key == TOMBSTONE {
+            return None;
+        }
         let mut idx = (splitmix64(key) as usize) & self.mask;
         loop {
             let e = &self.tabs[idx];
-            if e.key == EMPTY { return None; }
-            if e.key == key { return Some(OrderHandle(e.val)); }
+            if e.key == EMPTY {
+                return None;
+            }
+            if e.key == key {
+                return Some(OrderHandle(e.val));
+            }
             idx = (idx + 1) & self.mask;
         }
     }
 
     pub fn remove(&mut self, key: OrderId) -> Option<OrderHandle> {
-        if key == EMPTY || key == TOMBSTONE { return None; }
+        if key == EMPTY || key == TOMBSTONE {
+            return None;
+        }
         let mut idx = (splitmix64(key) as usize) & self.mask;
         loop {
             let e = self.tabs[idx];
-            if e.key == EMPTY { return None; }
+            if e.key == EMPTY {
+                return None;
+            }
             if e.key == key {
                 self.tabs[idx] = Entry { key: TOMBSTONE, val: 0 };
                 self.len -= 1;

@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use criterion::{Criterion, black_box, criterion_group, criterion_main};
 use whistle::{
     BandMode, Bands, EngineCfg, ExecIdMode, PriceDomain, ReferencePriceSource, SelfMatchPolicy,
