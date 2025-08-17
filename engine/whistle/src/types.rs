@@ -1,20 +1,27 @@
 #[allow(dead_code)]
-
 use core::fmt;
 
-pub type OrderId =   u64;
+pub type OrderId = u64;
 pub type AccountId = u64;
-pub type Qty =       u32;
-pub type TsNorm =    u64;
-pub type EnqSeq =    u32;
+pub type Qty = u32;
+pub type TsNorm = u64;
+pub type EnqSeq = u32;
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Side { Buy = 0, Sell = 1 }
+pub enum Side {
+    Buy = 0,
+    Sell = 1,
+}
 
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum OrderType { Limit = 0, Market = 1, Ioc = 2, PostOnly = 3 }
+pub enum OrderType {
+    Limit = 0,
+    Market = 1,
+    Ioc = 2,
+    PostOnly = 3,
+}
 
 #[repr(transparent)]
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]

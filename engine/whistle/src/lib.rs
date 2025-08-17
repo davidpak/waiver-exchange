@@ -1,20 +1,19 @@
 // Whistle - per-symbol deterministic matching engine
+#![allow(dead_code)]
 
-mod price_domain;
-mod config;
-mod types;
 mod arena;
+mod config;
 mod order_index;
+mod price_domain;
+mod types;
 
-pub use price_domain::{Price, PriceDomain, PriceIdx};
-pub use config::{
-    BandMode, Bands, SelfMatchPolicy, ExecIdMode, ReferencePriceSource, EngineCfg
-};
-pub use types::{OrderId, AccountId, Qty, TsNorm, EnqSeq, Side, OrderType, OrderHandle, H_NONE};
 pub use arena::{Arena, Order};
+pub use config::{BandMode, Bands, EngineCfg, ExecIdMode, ReferencePriceSource, SelfMatchPolicy};
 pub use order_index::OrderIndex;
+pub use price_domain::{Price, PriceDomain, PriceIdx};
+pub use types::{AccountId, EnqSeq, H_NONE, OrderHandle, OrderId, OrderType, Qty, Side, TsNorm};
 
-pub type TickId     = u64;
+pub type TickId = u64;
 
 pub struct Whistle {
     cfg: EngineCfg,
@@ -27,8 +26,12 @@ impl Whistle {
         let dom = cfg.price_domain;
         Self { cfg, dom }
     }
-    #[inline] pub fn tick(&mut self, _t: TickId) {}
-    #[inline] pub fn price_domain(&self) -> &PriceDomain { &self.dom }
+    #[inline]
+    pub fn tick(&mut self, _t: TickId) {}
+    #[inline]
+    pub fn price_domain(&self) -> &PriceDomain {
+        &self.dom
+    }
 }
 
 #[cfg(test)]

@@ -6,36 +6,45 @@ use crate::{AccountId, EnqSeq, H_NONE, OrderHandle, OrderId, PriceIdx, Qty, Side
 #[derive(Clone, Copy)]
 pub struct Order {
     // hot (touched in match loop)
-    pub id:        OrderId,
-    pub acct:      AccountId,
-    pub side:      Side,
+    pub id: OrderId,
+    pub acct: AccountId,
+    pub side: Side,
     pub price_idx: PriceIdx,
-    pub qty_open:  Qty,
-    pub ts_norm:   TsNorm,
-    pub enq_seq:   EnqSeq,
+    pub qty_open: Qty,
+    pub ts_norm: TsNorm,
+    pub enq_seq: EnqSeq,
 
     // intrustive FIFO pointers (for Book)
     pub prev: OrderHandle,
     pub next: OrderHandle,
 
     // cold/debug (kept compact)
-    pub typ:   u8,
-    pub _pad:  u8,
+    pub typ: u8,
+    pub _pad: u8,
     pub _pad2: u16,
-
 }
 
 impl Default for Order {
     fn default() -> Self {
         Self {
-            id: 0, acct: 0, side: Side::Buy, price_idx: 0, qty_open: 0, ts_norm: 0, enq_seq: 0,
-            prev: H_NONE, next: H_NONE, typ: 0, _pad: 0, _pad2: 0
+            id: 0,
+            acct: 0,
+            side: Side::Buy,
+            price_idx: 0,
+            qty_open: 0,
+            ts_norm: 0,
+            enq_seq: 0,
+            prev: H_NONE,
+            next: H_NONE,
+            typ: 0,
+            _pad: 0,
+            _pad2: 0,
         }
     }
 }
 
 pub struct Arena {
-    buf:  Box<[Order]>,
+    buf: Box<[Order]>,
     free: Vec<u32>,
     used: Vec<bool>,
 }
@@ -45,15 +54,16 @@ impl Arena {
         assert!(capacity > 0, "arena capacity must be > 0");
         let cap = capacity as usize;
         let mut free = Vec::with_capacity(cap);
-        for i in (0..cap).rev() { free.push(i as u32); }
-        Self {
-            buf: vec![Order::default(); cap].into_boxed_slice(),
-            free,
-            used: vec![false; cap],
+        for i in (0..cap).rev() {
+            free.push(i as u32);
         }
+        Self { buf: vec![Order::default(); cap].into_boxed_slice(), free, used: vec![false; cap] }
     }
 
-    #[inline] pub fn capacity(&self) -> u32 { self.buf.len() as u32 }
+    #[inline]
+    pub fn capacity(&self) -> u32 {
+        self.buf.len() as u32
+    }
 
     #[inline]
     pub fn alloc(&mut self) -> Option<OrderHandle> {
@@ -62,7 +72,8 @@ impl Arena {
         self.used[idx as usize] = true;
 
         let o = &mut self.buf[idx as usize];
-        o.prev = H_NONE; o.next = H_NONE;
+        o.prev = H_NONE;
+        o.next = H_NONE;
         Some(OrderHandle(idx))
     }
 
@@ -77,12 +88,14 @@ impl Arena {
         self.free.push(h.0);
     }
 
-    #[inline] pub fn get(&self, h: OrderHandle) -> &Order {
+    #[inline]
+    pub fn get(&self, h: OrderHandle) -> &Order {
         let i = h.0 as usize;
         assert!(self.used[i], "get: slot not in use");
         &self.buf[i]
     }
-    #[inline] pub fn get_mut(&mut self, h: OrderHandle) -> &mut Order {
+    #[inline]
+    pub fn get_mut(&mut self, h: OrderHandle) -> &mut Order {
         let i = h.0 as usize;
         assert!(self.used[i], "get_mut: slot not in use");
         &mut self.buf[i]
@@ -123,6 +136,6 @@ mod tests {
         let mut a = Arena::with_capacity(1);
         let h = a.alloc().unwrap();
         a.free(h);
-        a.free(h);  // second free should panic (debug guard)
+        a.free(h); // second free should panic (debug guard)
     }
 }

@@ -1,10 +1,19 @@
 # cargo-deny configuration: block risky licenses and known-bad deps
 
 [advisories]
-vulnerability = "deny"
-unmaintained = "warn"
+unmaintained = "workspace"
+
+# Yanked versions can be "allow" | "warn" | "deny"
 yanked = "warn"
-notice = "warn"
+
+# Put specific advisories or yanked versions here to silence them, if needed.
+# Examples:
+# ignore = [
+#   "RUSTSEC-20xx-xxxx",
+#   { id = "RUSTSEC-20xx-xxxx", reason = "why this doesn't affect us" },
+#   "some-crate@1.2.3",
+# ]
+ignore = []
 
 [licenses]
 allow = [
