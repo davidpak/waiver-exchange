@@ -2,18 +2,19 @@
 
 mod price_domain;
 mod config;
+mod types;
+mod arena;
+mod order_index;
 
 pub use price_domain::{Price, PriceDomain, PriceIdx};
 pub use config::{
     BandMode, Bands, SelfMatchPolicy, ExecIdMode, ReferencePriceSource, EngineCfg
 };
+pub use types::{OrderId, AccountId, Qty, TsNorm, EnqSeq, Side, OrderType, OrderHandle, H_NONE};
+pub use arena::{Arena, Order};
+pub use order_index::OrderIndex;
 
 pub type TickId     = u64;
-pub type OrderId    = u64;
-pub type AccountId  = u64;
-pub type Qty        = u32;
-pub type TsNorm     = u64;
-pub type EnqSeq     = u32;
 
 pub struct Whistle {
     cfg: EngineCfg,
