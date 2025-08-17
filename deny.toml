@@ -23,6 +23,9 @@ confidence-threshold = 0.8
 # Optional: warn if you list a license in `allow` that isn’t used.
 unused-allowed-license = "warn"
 
+[licenses.private]
+ignore = true
+
 [bans]
 # Lint on duplicate versions across the graph
 multiple-versions = "warn"
