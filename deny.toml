@@ -1,21 +1,16 @@
 # cargo-deny configuration: block risky licenses and known-bad deps
 
 [advisories]
+# Scope for unmaintained advisories: "all" | "workspace" | "transitive" | "none"
 unmaintained = "workspace"
-
-# Yanked versions can be "allow" | "warn" | "deny"
+# Yanked versions: "allow" | "warn" | "deny"
 yanked = "warn"
-
-# Put specific advisories or yanked versions here to silence them, if needed.
-# Examples:
-# ignore = [
-#   "RUSTSEC-20xx-xxxx",
-#   { id = "RUSTSEC-20xx-xxxx", reason = "why this doesn't affect us" },
-#   "some-crate@1.2.3",
-# ]
+# Silence specific advisories or yanked versions here if needed.
 ignore = []
 
 [licenses]
+# As of 0.18.4+, licenses are denied unless explicitly allowed; "default" key was removed.
+# List the SPDX identifiers you allow:
 allow = [
     "Apache-2.0",
     "MIT",
@@ -24,13 +19,16 @@ allow = [
     "ISC",
     "Unicode-DFS-2016",
 ]
-default = "deny"
 confidence-threshold = 0.8
+# Optional: warn if you list a license in `allow` that isn’t used.
+unused-allowed-license = "warn"
 
 [bans]
+# Lint on duplicate versions across the graph
 multiple-versions = "warn"
 
 [sources]
+# Only allow crates.io (by default) and no unknown git sources
 unknown-registry = "deny"
-unknown-git      = "deny"
-allow-git        = []
+unknown-git = "deny"
+allow-git = []
