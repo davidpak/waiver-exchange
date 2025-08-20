@@ -6,12 +6,14 @@ mod config;
 mod order_index;
 mod price_domain;
 mod types;
+mod bitset;
 
 pub use arena::{Arena, Order};
 pub use config::{BandMode, Bands, EngineCfg, ExecIdMode, ReferencePriceSource, SelfMatchPolicy};
 pub use order_index::OrderIndex;
 pub use price_domain::{Price, PriceDomain, PriceIdx};
 pub use types::{AccountId, EnqSeq, H_NONE, OrderHandle, OrderId, OrderType, Qty, Side, TsNorm};
+pub use bitset::Bitset;
 
 pub type TickId = u64;
 
