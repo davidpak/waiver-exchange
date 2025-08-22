@@ -3,6 +3,7 @@
 
 mod arena;
 mod bitset;
+mod book;
 mod config;
 mod order_index;
 mod price_domain;
@@ -10,6 +11,7 @@ mod types;
 
 pub use arena::{Arena, Order};
 pub use bitset::Bitset;
+pub use book::{Book, Level};
 pub use config::{BandMode, Bands, EngineCfg, ExecIdMode, ReferencePriceSource, SelfMatchPolicy};
 pub use order_index::OrderIndex;
 pub use price_domain::{Price, PriceDomain, PriceIdx};
