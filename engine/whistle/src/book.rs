@@ -1,9 +1,7 @@
 // engine/whistle/src/book.rs
 #![allow(dead_code)]
 
-use crate::{
-    Arena, Bitset, H_NONE, OrderHandle, PriceDomain, PriceIdx, Qty, Side,
-};
+use crate::{Arena, Bitset, H_NONE, OrderHandle, PriceDomain, PriceIdx, Qty, Side};
 
 /// FIFO queue + running total for a single price level.
 #[derive(Clone, Copy)]
@@ -197,7 +195,6 @@ impl Book {
         }
     }
 
-
     /// Adjust level total for a partial fill (order stays in place).
     #[inline]
     pub fn partial_fill(&mut self, side: Side, pidx: PriceIdx, traded: Qty) {
@@ -205,21 +202,23 @@ impl Book {
         lvl.total_qty = lvl.total_qty.saturating_sub(traded);
     }
 
-    #[inline] pub fn best_bid(&self) -> Option<PriceIdx> { self.best_bid_idx }
-    #[inline] pub fn best_ask(&self) -> Option<PriceIdx> { self.best_ask_idx }
+    #[inline]
+    pub fn best_bid(&self) -> Option<PriceIdx> {
+        self.best_bid_idx
+    }
+    #[inline]
+    pub fn best_ask(&self) -> Option<PriceIdx> {
+        self.best_ask_idx
+    }
 
     #[inline]
     pub fn next_ask_at_or_above(&self, i: PriceIdx) -> Option<PriceIdx> {
-        self.non_empty_asks
-            .next_one_at_or_after(i as usize)
-            .map(|x| x as PriceIdx)
+        self.non_empty_asks.next_one_at_or_after(i as usize).map(|x| x as PriceIdx)
     }
 
     #[inline]
     pub fn prev_bid_at_or_below(&self, i: PriceIdx) -> Option<PriceIdx> {
-        self.non_empty_bids
-            .prev_one_at_or_before(i as usize)
-            .map(|x| x as PriceIdx)
+        self.non_empty_bids.prev_one_at_or_before(i as usize).map(|x| x as PriceIdx)
     }
 
     #[inline]
@@ -231,7 +230,7 @@ impl Book {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{Arena, OrderHandle, Side, PriceDomain};
+    use crate::{Arena, OrderHandle, PriceDomain, Side};
 
     fn dom_100_200_5() -> PriceDomain {
         PriceDomain { floor: 100, ceil: 200, tick: 5 }
@@ -282,15 +281,20 @@ mod tests {
         let pidx = dom.idx(110).unwrap();
         {
             let o = arena.get_mut(h1);
-            o.side = Side::Sell; o.price_idx = pidx; o.qty_open = 5;
+            o.side = Side::Sell;
+            o.price_idx = pidx;
+            o.qty_open = 5;
         }
         book.insert_tail(&mut arena, Side::Sell, h1, pidx, 5);
 
         let h2 = arena.alloc().unwrap();
         {
             let o = arena.get_mut(h2);
-            o.side = Side::Sell; o.price_idx = pidx; o.qty_open = 7;
-            o.prev = H_NONE; o.next = H_NONE;
+            o.side = Side::Sell;
+            o.price_idx = pidx;
+            o.qty_open = 7;
+            o.prev = H_NONE;
+            o.next = H_NONE;
         }
         book.insert_tail(&mut arena, Side::Sell, h2, pidx, 7);
 
@@ -334,13 +338,15 @@ mod tests {
         let p150 = dom.idx(150).unwrap();
 
         // mark sparse asks at 110 and 150; bids at 130
-        for &(side, price, qty) in &[
-            (Side::Sell, 110, 1), (Side::Sell, 150, 2), (Side::Buy, 130, 3),
-        ] {
+        for &(side, price, qty) in
+            &[(Side::Sell, 110, 1), (Side::Sell, 150, 2), (Side::Buy, 130, 3)]
+        {
             let h = arena.alloc().unwrap();
             let pidx = dom.idx(price).unwrap();
             let o = arena.get_mut(h);
-            o.side = side; o.price_idx = pidx; o.qty_open = qty;
+            o.side = side;
+            o.price_idx = pidx;
+            o.qty_open = qty;
             book.insert_tail(&mut arena, side, h, pidx, qty);
         }
 
