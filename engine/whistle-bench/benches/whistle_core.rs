@@ -81,7 +81,8 @@ fn bench_event_emission(c: &mut Criterion) {
         b.iter(|| {
             emitter.start_tick(black_box(100));
             let tick_complete = EvTickComplete { symbol: 1, tick: 100 };
-            black_box(emitter.emit(EngineEvent::TickComplete(tick_complete)).unwrap());
+            emitter.emit(EngineEvent::TickComplete(tick_complete)).unwrap();
+            black_box(());
         })
     });
 }
@@ -104,11 +105,12 @@ fn bench_event_emission_sequence(c: &mut Criterion) {
                 maker_order: 1,
                 taker_order: 2,
             };
-            black_box(emitter.emit(EngineEvent::Trade(trade)).unwrap());
+            emitter.emit(EngineEvent::Trade(trade)).unwrap();
 
             // Emit tick complete
             let tick_complete = EvTickComplete { symbol: 1, tick: 100 };
-            black_box(emitter.emit(EngineEvent::TickComplete(tick_complete)).unwrap());
+            emitter.emit(EngineEvent::TickComplete(tick_complete)).unwrap();
+            black_box(());
         })
     });
 }

@@ -161,15 +161,15 @@ impl SubmitBuilder {
 
         Ok(InboundMsg {
             kind: MsgKind::Submit,
-            submit: Some(Submit { 
-                order_id, 
-                account_id, 
-                side, 
-                typ, 
-                price: self.price, 
-                qty, 
-                ts_norm, 
-                meta 
+            submit: Some(Submit {
+                order_id,
+                account_id,
+                side,
+                typ,
+                price: self.price,
+                qty,
+                ts_norm,
+                meta,
             }),
             cancel: None,
             enq_seq,
