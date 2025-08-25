@@ -6,3 +6,4 @@
 coverage/
 criterion/
 .venv/
+.cursor/

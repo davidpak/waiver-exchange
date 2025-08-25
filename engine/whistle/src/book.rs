@@ -1,4 +1,3 @@
-// engine/whistle/src/book.rs
 #![allow(dead_code)]
 
 use crate::{Arena, Bitset, H_NONE, OrderHandle, PriceDomain, PriceIdx, Qty, Side};
@@ -18,7 +17,6 @@ impl Default for Level {
 }
 
 /// Two-ladder order book (bids & asks) with intrusive FIFOs and bitset navigation.
-/// Matches spec §§2.2.4–2.2.6.
 pub struct Book {
     pub dom: PriceDomain,
 
@@ -121,11 +119,9 @@ impl Book {
         let lvl = &mut levels[pidx as usize];
 
         if lvl.tail == H_NONE {
-            // Empty level → becomes single element
             lvl.head = h;
             lvl.tail = h;
         } else {
-            // Append to tail using short reborrow scopes
             let t = lvl.tail;
             {
                 let tail_o = arena.get_mut(t);
@@ -138,10 +134,8 @@ impl Book {
             lvl.tail = h;
         }
 
-        // Update level totals
         lvl.total_qty = lvl.total_qty.saturating_add(qty);
 
-        // Mark non-empty + maybe update best pointers
         self.bitset_mut(side).set(pidx as usize);
         self.set_best_on_insert(side, pidx);
     }
@@ -157,14 +151,12 @@ impl Book {
         let levels = self.levels_mut(side);
         let lvl = &mut levels[pidx_usize];
 
-        // Unlink from intrusive list; keep mutable borrows short-lived.
         if prev != H_NONE {
             {
                 let prev_o = arena.get_mut(prev);
                 prev_o.next = next;
             }
         } else {
-            // h was head
             lvl.head = next;
         }
 
@@ -174,20 +166,16 @@ impl Book {
                 next_o.prev = prev;
             }
         } else {
-            // h was tail
             lvl.tail = prev;
         }
 
-        // Decrease level total by the order's remaining open qty
         lvl.total_qty = lvl.total_qty.saturating_sub(qty_open);
 
-        // If level becomes empty, clear bit and recompute best pointer
         if lvl.head == H_NONE {
             self.bitset_mut(side).clear(pidx_usize);
             self.recompute_best_after_empty(side, pidx_usize as PriceIdx);
         }
 
-        // Scrub removed order's intrusive pointers (defensive)
         {
             let o_mut = arena.get_mut(h);
             o_mut.prev = H_NONE;
@@ -242,7 +230,6 @@ mod tests {
         let mut book = Book::new(dom);
         let mut arena = Arena::with_capacity(8);
 
-        // helper to alloc a resting order
         let mut alloc_at = |side: Side, price: u32, qty: Qty| -> OrderHandle {
             let h = arena.alloc().unwrap();
             let pidx = dom.idx(price).unwrap();

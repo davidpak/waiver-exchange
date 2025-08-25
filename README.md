@@ -2,34 +2,98 @@
 
 High-discipline Rust workspace for the **Whistle** matching engine: deterministic, test-first, and performance-driven.
 
+---
+
 ## Quickstart
+
 ```bash
-# Pin toolchain (edit rust-toolchain.toml to exact version when ready)
+# Build & test everything
 cargo build --workspace
 cargo test  --workspace
-cargo fmt   --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
 ```
-## Benchmarks
+### Verify-only (what CI runs)
+```
+cargo fmt   --all -- --check      # no diffs allowed
+cargo clippy --workspace -- -D warnings
+```
+### Fix locally (before committing)
+```
+cargo fmt   --all                  # writes formatting changes
+cargo clippy --workspace -- -D warnings
+cargo test  --workspace
+```
+
+Tip: Keep formatting stable on stable Rust. Avoid nightly-only rustfmt options
+(e.g., group_imports = "StdExternalCrate"). If you see a rustfmt warning in CI, run
+cargo fmt --all, commit, and push.
+
+## Developer Workflow (before push/PR)
+
+### 1. Format
+```
+cargo fmt --all
+```
+
+### 2. Lint as errors
+
+```
+cargo clippy --workspace -- -D warnings
+```
+
+
+### 3. Tests
+
+```
+cargo test --workspace
+```
+
+
+### 4. (Optional) Supply chain
+
+```
+cargo deny check
+cargo audit -D warnings
+```
+
+### Git hooks (auto-help)
+One-time:
+```
+chmod +x scripts/pre-commit.sh
+ln -sf "$(pwd)/scripts/pre-commit.sh" .git/hooks/pre-commit
+```
+### Branching & PRs
+
+* Create a short-lived feature branch: `git switch -c feat/<topic>`
+
+* Run the steps above
+
+* Push and open a PR to main
+
+* CI must be green (fmt/clippy/tests, deny/audit)
+
+### Benchmarks
 ```
 cargo bench -p whistle-bench
 # HTML report: target/criterion/<bench>/report/index.html
 ```
-
-## Structure
+### Repository Structure
 ```
 engine/whistle           # core engine (library)
 engine/whistle-bench     # Criterion benchmarks (no deps in hot path)
 exe/execution-manager    # downstream sink (placeholder)
 exe/simclock             # logical tick driver (placeholder)
 tools/replay             # replay checker (placeholder)
-docs/adr                 # ADRs: determinism, data/rejects, event sequencing
+docs/adr                 # ADRs: determinism, rejects, event sequencing, etc.
 ```
 
-## Quality Gates
+### Quality Gates (Local & CI)
 
-* fmt + clippy -D warnings locally and in CI
+* `cargo fmt --all -- --check` (no diffs in CI)
 
-* cargo-audit & cargo-deny in CI
+* `cargo clippy --workspace -- -D warnings`
 
-* Benchmarks tracked via docs/perf-baselines.json
+* `cargo test --workspace`
+
+* `cargo deny check and cargo audit -D warnings`
+
+The commands above are mirrored in CI so your local pass == green PR.
