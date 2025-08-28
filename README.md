@@ -29,6 +29,8 @@ cargo fmt --all, commit, and push.
 
 ## Developer Workflow (before push/PR)
 
+**📖 For detailed development guidelines, see [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md)**
+
 ### 1. Format
 ```
 cargo fmt --all
@@ -83,8 +85,30 @@ engine/whistle-bench     # Criterion benchmarks (no deps in hot path)
 exe/execution-manager    # downstream sink (placeholder)
 exe/simclock             # logical tick driver (placeholder)
 tools/replay             # replay checker (placeholder)
+tools/whistle-playground # interactive CLI for testing Whistle
 docs/adr                 # ADRs: determinism, rejects, event sequencing, etc.
 ```
+
+### Interactive Testing
+
+Test the Whistle engine interactively with the playground tool:
+
+```bash
+# Quick demo
+cargo run --bin whistle-playground demo --symbol 42
+
+# Interactive session
+cargo run --bin whistle-playground interactive
+
+# Custom configuration
+cargo run --bin whistle-playground interactive \
+  --symbol 42 \
+  --price-floor 100 \
+  --price-ceil 200 \
+  --tick-size 5
+```
+
+Perfect for testing new features, debugging, and learning how the engine works!
 
 ### Quality Gates (Local & CI)
 
