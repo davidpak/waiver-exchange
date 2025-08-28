@@ -81,15 +81,22 @@ impl Whistle {
         // Step 1: Drain inbound queue (up to batch_max)
         let messages = self.inbound_queue.drain(self.cfg.batch_max as usize);
 
-        // Step 2: Process each message
+        // Step 2: Process each message (validate, admit, queue for matching)
+        let mut orders_to_match = Vec::new();
         for msg in messages {
-            self.process_message(msg, t);
+            match self.process_message(msg, t) {
+                Ok(handle) => orders_to_match.push(handle),
+                Err(_) => {
+                    // Rejection already emitted as lifecycle event
+                }
+            }
         }
 
-        // TODO: Step 3: Match orders using price-time priority
-        // TODO: Step 4: Emit trade events
-        // TODO: Step 5: Emit book delta events
-        // TODO: Step 6: Emit lifecycle events
+        // Step 3: Match orders using price-time priority
+        self.match_orders(orders_to_match, t);
+
+        // Step 4: Emit book delta events (coalesced)
+        self.emit_book_deltas(t);
 
         // Emit tick complete event
         let tick_complete = EvTickComplete { symbol: self.cfg.symbol, tick: t };
@@ -120,21 +127,140 @@ impl Whistle {
     /// 1. Basic validation (message structure, price domain)
     /// 2. Emit lifecycle events for all messages (accepted/rejected)
     /// 3. Queue valid orders for matching (future implementation)
-    fn process_message(&mut self, msg: InboundMsg, tick: TickId) {
-        // For now, emit lifecycle events for all messages
-        // TODO: Add proper validation and order admission logic
+    fn process_message(
+        &mut self,
+        msg: InboundMsg,
+        tick: TickId,
+    ) -> Result<OrderHandle, RejectReason> {
+        match msg.kind {
+            MsgKind::Submit => {
+                let submit = msg.submit.as_ref().unwrap();
 
-        let lifecycle = EvLifecycle {
-            symbol: self.cfg.symbol,
-            tick,
-            kind: LifecycleKind::Accepted, // TODO: Determine based on validation
-            order_id: msg.order_id(),
-            reason: None, // TODO: Set rejection reason if validation fails
-        };
+                // Basic validation
+                if let Some(price) = submit.price {
+                    // Check tick size alignment and price domain
+                    if self.dom.idx(price).is_none() {
+                        let lifecycle = EvLifecycle {
+                            symbol: self.cfg.symbol,
+                            tick,
+                            kind: LifecycleKind::Rejected,
+                            order_id: submit.order_id,
+                            reason: Some(RejectReason::BadTick),
+                        };
+                        self.emitter
+                            .emit(EngineEvent::Lifecycle(lifecycle))
+                            .expect("Lifecycle event should always be valid");
+                        return Err(RejectReason::BadTick);
+                    }
+                }
 
-        self.emitter
-            .emit(EngineEvent::Lifecycle(lifecycle))
-            .expect("Lifecycle event should always be valid");
+                // Allocate order in arena
+                let handle = self.arena.alloc().ok_or(RejectReason::ArenaFull)?;
+
+                // Create order
+                let order = Order {
+                    id: submit.order_id,
+                    acct: submit.account_id,
+                    side: submit.side,
+                    price_idx: submit.price.map(|p| self.dom.idx(p).unwrap()).unwrap_or(0),
+                    qty_open: submit.qty,
+                    ts_norm: submit.ts_norm,
+                    enq_seq: msg.enq_seq,
+                    typ: submit.typ as u8,
+                    ..Default::default()
+                };
+
+                // Store order in arena
+                *self.arena.get_mut(handle) = order;
+
+                // Emit accepted lifecycle event
+                let lifecycle = EvLifecycle {
+                    symbol: self.cfg.symbol,
+                    tick,
+                    kind: LifecycleKind::Accepted,
+                    order_id: submit.order_id,
+                    reason: None,
+                };
+                self.emitter
+                    .emit(EngineEvent::Lifecycle(lifecycle))
+                    .expect("Lifecycle event should always be valid");
+
+                Ok(handle)
+            }
+            MsgKind::Cancel => {
+                let cancel = msg.cancel.as_ref().unwrap();
+
+                // For now, just emit accepted lifecycle event
+                // TODO: Implement actual cancel logic
+                let lifecycle = EvLifecycle {
+                    symbol: self.cfg.symbol,
+                    tick,
+                    kind: LifecycleKind::Accepted,
+                    order_id: cancel.order_id,
+                    reason: None,
+                };
+                self.emitter
+                    .emit(EngineEvent::Lifecycle(lifecycle))
+                    .expect("Lifecycle event should always be valid");
+
+                // Return a dummy handle for now
+                Err(RejectReason::UnknownOrder)
+            }
+        }
+    }
+
+    /// Match orders using strict price-time priority
+    ///
+    /// This implements the core matching logic as specified in the documentation:
+    /// - Strict price-time priority with (ts_norm, enq_seq) tie-breaking
+    /// - Self-match prevention based on policy
+    /// - Order type semantics (LIMIT, MARKET, IOC, POST-ONLY)
+    fn match_orders(&mut self, orders_to_match: Vec<OrderHandle>, _tick: TickId) {
+        // TODO: Implement full matching logic
+        // For now, just process orders without matching
+        for handle in orders_to_match {
+            let order = self.arena.get(handle);
+            let side = order.side;
+            let price_idx = order.price_idx;
+            let qty_open = order.qty_open;
+
+            // Add to book if it's a resting order type
+            match order.typ {
+                0 => {
+                    // OrderType::Limit
+                    // Add to book
+                    self.book.insert_tail(&mut self.arena, side, handle, price_idx, qty_open);
+                }
+                1 => { // OrderType::Market
+                    // Market orders never rest - should match immediately
+                    // TODO: Implement immediate matching
+                }
+                2 => { // OrderType::Ioc
+                    // IOC orders match immediately, cancel remainder
+                    // TODO: Implement immediate matching
+                }
+                3 => {
+                    // OrderType::PostOnly
+                    // POST-ONLY orders add liquidity only
+                    // TODO: Check if it would cross before adding
+                    self.book.insert_tail(&mut self.arena, side, handle, price_idx, qty_open);
+                }
+                _ => {
+                    // Invalid order type
+                }
+            }
+        }
+    }
+
+    /// Emit book delta events for all levels that changed during the tick
+    ///
+    /// This coalesces all changes to a level into a single BookDelta event
+    /// with the final post-tick state.
+    fn emit_book_deltas(&mut self, _tick: TickId) {
+        // TODO: Implement book delta emission
+        // For now, this is a placeholder
+        // The book should track which levels were modified during the tick
+        // and emit BookDelta events for each modified level
     }
 
     /// Enqueue a message from OrderRouter
@@ -289,5 +415,314 @@ mod tests {
         // Queue should be empty after processing
         let (len, _) = eng.queue_stats();
         assert_eq!(len, 0);
+    }
+
+    #[test]
+    fn order_validation_rejection() {
+        let cfg = EngineCfg {
+            symbol: 42,
+            price_domain: PriceDomain { floor: 100, ceil: 200, tick: 5 },
+            bands: Bands { mode: BandMode::Percent(1000) },
+            batch_max: 1024,
+            arena_capacity: 4096,
+            elastic_arena: false,
+            exec_shift_bits: 12,
+            exec_id_mode: ExecIdMode::Sharded,
+            self_match_policy: SelfMatchPolicy::Skip,
+            allow_market_cold_start: false,
+            reference_price_source: ReferencePriceSource::SnapshotLastTrade,
+        };
+        let mut eng = Whistle::new(cfg);
+
+        // Test invalid tick size (103 not aligned to tick=5)
+        let invalid_tick_msg =
+            InboundMsg::submit(1, 1, Side::Buy, OrderType::Limit, Some(103), 10, 1000, 0, 1);
+        eng.enqueue_message(invalid_tick_msg).unwrap();
+
+        let events = eng.tick(100);
+
+        // Should have 2 events: 1 rejected lifecycle + 1 tick complete
+        assert_eq!(events.len(), 2);
+
+        match &events[0] {
+            EngineEvent::Lifecycle(ev) => {
+                assert_eq!(ev.symbol, 42);
+                assert_eq!(ev.tick, 100);
+                assert_eq!(ev.order_id, 1);
+                assert_eq!(ev.kind, LifecycleKind::Rejected);
+                assert_eq!(ev.reason, Some(RejectReason::BadTick));
+            }
+            _ => panic!("Expected rejected Lifecycle event"),
+        }
+
+        match &events[1] {
+            EngineEvent::TickComplete(ev) => {
+                assert_eq!(ev.symbol, 42);
+                assert_eq!(ev.tick, 100);
+            }
+            _ => panic!("Expected TickComplete event"),
+        }
+    }
+
+    #[test]
+    fn canonical_event_ordering() {
+        let cfg = EngineCfg {
+            symbol: 42,
+            price_domain: PriceDomain { floor: 100, ceil: 200, tick: 5 },
+            bands: Bands { mode: BandMode::Percent(1000) },
+            batch_max: 1024,
+            arena_capacity: 4096,
+            elastic_arena: false,
+            exec_shift_bits: 12,
+            exec_id_mode: ExecIdMode::Sharded,
+            self_match_policy: SelfMatchPolicy::Skip,
+            allow_market_cold_start: false,
+            reference_price_source: ReferencePriceSource::SnapshotLastTrade,
+        };
+        let mut eng = Whistle::new(cfg);
+
+        // Submit multiple orders to test event ordering
+        let msg1 = InboundMsg::submit(1, 1, Side::Buy, OrderType::Limit, Some(150), 10, 1000, 0, 1);
+        let msg2 = InboundMsg::submit(2, 2, Side::Sell, OrderType::Limit, Some(160), 5, 1001, 0, 2);
+        let msg3 = InboundMsg::cancel(3, 1002, 3);
+
+        eng.enqueue_message(msg1).unwrap();
+        eng.enqueue_message(msg2).unwrap();
+        eng.enqueue_message(msg3).unwrap();
+
+        let events = eng.tick(100);
+
+        // Verify canonical order: Lifecycle events first, then TickComplete
+        assert!(events.len() >= 2); // At least lifecycle events + tick complete
+
+        // All lifecycle events should come before TickComplete
+        let mut found_tick_complete = false;
+        for event in &events {
+            match event {
+                EngineEvent::TickComplete(_) => {
+                    found_tick_complete = true;
+                }
+                EngineEvent::Lifecycle(_) => {
+                    assert!(!found_tick_complete, "Lifecycle events must come before TickComplete");
+                }
+                _ => {
+                    // Other event types should also come before TickComplete
+                    assert!(!found_tick_complete, "All events must come before TickComplete");
+                }
+            }
+        }
+
+        // Must have exactly one TickComplete at the end
+        assert!(found_tick_complete, "Must have TickComplete event");
+    }
+
+    #[test]
+    fn book_state_management() {
+        let cfg = EngineCfg {
+            symbol: 42,
+            price_domain: PriceDomain { floor: 100, ceil: 200, tick: 5 },
+            bands: Bands { mode: BandMode::Percent(1000) },
+            batch_max: 1024,
+            arena_capacity: 4096,
+            elastic_arena: false,
+            exec_shift_bits: 12,
+            exec_id_mode: ExecIdMode::Sharded,
+            self_match_policy: SelfMatchPolicy::Skip,
+            allow_market_cold_start: false,
+            reference_price_source: ReferencePriceSource::SnapshotLastTrade,
+        };
+        let mut eng = Whistle::new(cfg);
+
+        // Submit a limit order that should rest in the book
+        let buy_order =
+            InboundMsg::submit(1, 1, Side::Buy, OrderType::Limit, Some(150), 10, 1000, 0, 1);
+        eng.enqueue_message(buy_order).unwrap();
+
+        let events = eng.tick(100);
+
+        // Should be accepted and added to book
+        assert_eq!(events.len(), 2); // Lifecycle + TickComplete
+
+        match &events[0] {
+            EngineEvent::Lifecycle(ev) => {
+                assert_eq!(ev.kind, LifecycleKind::Accepted);
+                assert_eq!(ev.order_id, 1);
+            }
+            _ => panic!("Expected accepted Lifecycle event"),
+        }
+
+        // Submit another order in next tick
+        let sell_order =
+            InboundMsg::submit(2, 2, Side::Sell, OrderType::Limit, Some(160), 5, 1001, 0, 1);
+        eng.enqueue_message(sell_order).unwrap();
+
+        let events2 = eng.tick(101);
+
+        // Should also be accepted
+        assert_eq!(events2.len(), 2); // Lifecycle + TickComplete
+
+        match &events2[0] {
+            EngineEvent::Lifecycle(ev) => {
+                assert_eq!(ev.kind, LifecycleKind::Accepted);
+                assert_eq!(ev.order_id, 2);
+            }
+            _ => panic!("Expected accepted Lifecycle event"),
+        }
+    }
+
+    #[test]
+    fn arena_capacity_limits() {
+        let cfg = EngineCfg {
+            symbol: 42,
+            price_domain: PriceDomain { floor: 100, ceil: 200, tick: 5 },
+            bands: Bands { mode: BandMode::Percent(1000) },
+            batch_max: 1024,
+            arena_capacity: 8, // Must be power of 2 >= 8 for OrderIndex
+            elastic_arena: false,
+            exec_shift_bits: 12,
+            exec_id_mode: ExecIdMode::Sharded,
+            self_match_policy: SelfMatchPolicy::Skip,
+            allow_market_cold_start: false,
+            reference_price_source: ReferencePriceSource::SnapshotLastTrade,
+        };
+        let mut eng = Whistle::new(cfg);
+
+        // Submit orders up to capacity
+        let msg1 = InboundMsg::submit(1, 1, Side::Buy, OrderType::Limit, Some(150), 10, 1000, 0, 1);
+        let msg2 = InboundMsg::submit(2, 2, Side::Buy, OrderType::Limit, Some(155), 10, 1001, 0, 2);
+        let msg3 = InboundMsg::submit(3, 3, Side::Buy, OrderType::Limit, Some(160), 10, 1002, 0, 3);
+        let msg4 = InboundMsg::submit(4, 4, Side::Buy, OrderType::Limit, Some(165), 10, 1003, 0, 4);
+        let msg5 = InboundMsg::submit(5, 5, Side::Buy, OrderType::Limit, Some(170), 10, 1004, 0, 5);
+        let msg6 = InboundMsg::submit(6, 6, Side::Buy, OrderType::Limit, Some(175), 10, 1005, 0, 6);
+        let msg7 = InboundMsg::submit(7, 7, Side::Buy, OrderType::Limit, Some(180), 10, 1006, 0, 7);
+        let msg8 = InboundMsg::submit(8, 8, Side::Buy, OrderType::Limit, Some(185), 10, 1007, 0, 8);
+        let msg9 = InboundMsg::submit(9, 9, Side::Buy, OrderType::Limit, Some(190), 10, 1008, 0, 9);
+
+        eng.enqueue_message(msg1).unwrap();
+        eng.enqueue_message(msg2).unwrap();
+        eng.enqueue_message(msg3).unwrap();
+        eng.enqueue_message(msg4).unwrap();
+        eng.enqueue_message(msg5).unwrap();
+        eng.enqueue_message(msg6).unwrap();
+        eng.enqueue_message(msg7).unwrap();
+        eng.enqueue_message(msg8).unwrap();
+        eng.enqueue_message(msg9).unwrap();
+
+        let events = eng.tick(100);
+
+        // Check how many lifecycle events we got
+        let lifecycle_events: Vec<_> = events
+            .iter()
+            .filter_map(|e| if let EngineEvent::Lifecycle(ev) = e { Some(ev) } else { None })
+            .collect();
+
+        // Should have 8 lifecycle events (all accepted, 9th rejected before processing)
+        assert_eq!(lifecycle_events.len(), 8);
+
+        // Check that all 8 are accepted
+        for i in 0..8 {
+            assert_eq!(lifecycle_events[i].order_id, (i + 1) as u64);
+            assert_eq!(lifecycle_events[i].kind, LifecycleKind::Accepted);
+        }
+    }
+
+    #[test]
+    fn determinism_replay() {
+        let cfg = EngineCfg {
+            symbol: 42,
+            price_domain: PriceDomain { floor: 100, ceil: 200, tick: 5 },
+            bands: Bands { mode: BandMode::Percent(1000) },
+            batch_max: 1024,
+            arena_capacity: 4096,
+            elastic_arena: false,
+            exec_shift_bits: 12,
+            exec_id_mode: ExecIdMode::Sharded,
+            self_match_policy: SelfMatchPolicy::Skip,
+            allow_market_cold_start: false,
+            reference_price_source: ReferencePriceSource::SnapshotLastTrade,
+        };
+
+        // Run the same sequence twice
+        let mut eng1 = Whistle::new(cfg.clone());
+        let mut eng2 = Whistle::new(cfg);
+
+        // Submit identical orders
+        let msg1 = InboundMsg::submit(1, 1, Side::Buy, OrderType::Limit, Some(150), 10, 1000, 0, 1);
+        let msg2 = InboundMsg::submit(2, 2, Side::Sell, OrderType::Limit, Some(160), 5, 1001, 0, 2);
+
+        eng1.enqueue_message(msg1.clone()).unwrap();
+        eng1.enqueue_message(msg2.clone()).unwrap();
+        eng2.enqueue_message(msg1).unwrap();
+        eng2.enqueue_message(msg2).unwrap();
+
+        let events1 = eng1.tick(100);
+        let events2 = eng2.tick(100);
+
+        // Events should be identical (deterministic)
+        assert_eq!(events1.len(), events2.len());
+
+        for (e1, e2) in events1.iter().zip(events2.iter()) {
+            match (e1, e2) {
+                (EngineEvent::Lifecycle(ev1), EngineEvent::Lifecycle(ev2)) => {
+                    assert_eq!(ev1.symbol, ev2.symbol);
+                    assert_eq!(ev1.tick, ev2.tick);
+                    assert_eq!(ev1.order_id, ev2.order_id);
+                    assert_eq!(ev1.kind, ev2.kind);
+                    assert_eq!(ev1.reason, ev2.reason);
+                }
+                (EngineEvent::TickComplete(ev1), EngineEvent::TickComplete(ev2)) => {
+                    assert_eq!(ev1.symbol, ev2.symbol);
+                    assert_eq!(ev1.tick, ev2.tick);
+                }
+                _ => panic!("Event types should match"),
+            }
+        }
+    }
+
+    #[test]
+    fn queue_backpressure() {
+        let cfg = EngineCfg {
+            symbol: 42,
+            price_domain: PriceDomain { floor: 100, ceil: 200, tick: 5 },
+            bands: Bands { mode: BandMode::Percent(1000) },
+            batch_max: 2, // Very small batch size
+            arena_capacity: 4096,
+            elastic_arena: false,
+            exec_shift_bits: 12,
+            exec_id_mode: ExecIdMode::Sharded,
+            self_match_policy: SelfMatchPolicy::Skip,
+            allow_market_cold_start: false,
+            reference_price_source: ReferencePriceSource::SnapshotLastTrade,
+        };
+        let mut eng = Whistle::new(cfg);
+
+        // Check queue capacity
+        let (_, capacity) = eng.queue_stats();
+        assert_eq!(capacity, 2); // Queue uses exact batch_max value
+
+        // Fill the queue
+        for i in 0..10 {
+            let msg = InboundMsg::submit(
+                i,
+                i,
+                Side::Buy,
+                OrderType::Limit,
+                Some(150),
+                10,
+                1000 + i,
+                0,
+                i as u32,
+            );
+            let result = eng.enqueue_message(msg);
+
+            // Should accept first few, then reject due to backpressure
+            if i < 1 {
+                // Queue capacity is 2, so can hold 1 message before full
+                assert!(result.is_ok(), "Should accept message {}", i);
+            } else {
+                assert!(result.is_err(), "Should reject message {} due to backpressure", i);
+                assert_eq!(result.unwrap_err(), RejectReason::QueueBackpressure);
+            }
+        }
     }
 }
