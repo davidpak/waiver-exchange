@@ -494,7 +494,6 @@ mod tests {
 
         // Verify canonical order: Lifecycle events first, then TickComplete
         assert!(events.len() >= 2); // At least lifecycle events + tick complete
-
         // All lifecycle events should come before TickComplete
         let mut found_tick_complete = false;
         for event in &events {
@@ -511,7 +510,6 @@ mod tests {
                 }
             }
         }
-
         // Must have exactly one TickComplete at the end
         assert!(found_tick_complete, "Must have TickComplete event");
     }
@@ -620,9 +618,9 @@ mod tests {
         assert_eq!(lifecycle_events.len(), 8);
 
         // Check that all 8 are accepted
-        for i in 0..8 {
-            assert_eq!(lifecycle_events[i].order_id, (i + 1) as u64);
-            assert_eq!(lifecycle_events[i].kind, LifecycleKind::Accepted);
+        for (i, event) in lifecycle_events.iter().enumerate().take(8) {
+            assert_eq!(event.order_id, (i + 1) as u64);
+            assert_eq!(event.kind, LifecycleKind::Accepted);
         }
     }
 
@@ -643,7 +641,7 @@ mod tests {
         };
 
         // Run the same sequence twice
-        let mut eng1 = Whistle::new(cfg.clone());
+        let mut eng1 = Whistle::new(cfg);
         let mut eng2 = Whistle::new(cfg);
 
         // Submit identical orders
@@ -660,7 +658,6 @@ mod tests {
 
         // Events should be identical (deterministic)
         assert_eq!(events1.len(), events2.len());
-
         for (e1, e2) in events1.iter().zip(events2.iter()) {
             match (e1, e2) {
                 (EngineEvent::Lifecycle(ev1), EngineEvent::Lifecycle(ev2)) => {
@@ -718,9 +715,9 @@ mod tests {
             // Should accept first few, then reject due to backpressure
             if i < 1 {
                 // Queue capacity is 2, so can hold 1 message before full
-                assert!(result.is_ok(), "Should accept message {}", i);
+                assert!(result.is_ok(), "Should accept message {i}");
             } else {
-                assert!(result.is_err(), "Should reject message {} due to backpressure", i);
+                assert!(result.is_err(), "Should reject message {i} due to backpressure");
                 assert_eq!(result.unwrap_err(), RejectReason::QueueBackpressure);
             }
         }
