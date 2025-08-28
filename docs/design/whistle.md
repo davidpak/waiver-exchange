@@ -1476,3 +1476,88 @@ Common violations of Whistle's non-negotiable invariants that break determinism,
 **Self-match prevention** — Skip same-account orders during matching to prevent self-trades.
 
 Use debug assertions to validate invariants at runtime. Property tests should verify price-time priority and replay determinism. Performance tests must confirm allocation-free hot paths.
+
+## Implementation Details & Behaviors
+
+### Queue Capacity & Backpressure
+
+**Actual Behavior (Validated by Tests):**
+- Queue capacity uses **exact `batch_max` value**, not rounded up to power of 2
+- With `batch_max: 2`, queue capacity is exactly 2
+- Queue can hold `capacity - 1` messages before rejecting (1 message with `batch_max: 2`)
+- Backpressure rejection: `RejectReason::QueueBackpressure`
+
+**Example:**
+```rust
+let cfg = EngineCfg { batch_max: 2, /* ... */ };
+let mut eng = Whistle::new(cfg);
+let (_, capacity) = eng.queue_stats();
+assert_eq!(capacity, 2); // Exact batch_max value
+```
+
+### Arena Capacity & Order Limits
+
+**Actual Behavior (Validated by Tests):**
+- Arena capacity is the **exact `arena_capacity` value**
+- OrderIndex capacity is `arena_capacity * 2` (for hash table efficiency)
+- Arena full rejection: `RejectReason::ArenaFull`
+- Orders rejected at arena full do **not** generate lifecycle events (rejected before processing)
+
+**Example:**
+```rust
+let cfg = EngineCfg { arena_capacity: 8, /* ... */ };
+// Can accept exactly 8 orders, 9th order rejected before processing
+```
+
+### Event Ordering & Sequencing
+
+**Actual Behavior (Validated by Tests):**
+- **Canonical order maintained**: Lifecycle events → TickComplete
+- **Deterministic sequencing**: `seq_in_tick` increments for each event
+- **All lifecycle events** come before TickComplete
+- **Exactly one TickComplete** per tick
+
+**Event Flow:**
+1. Process messages (validate, admit, reject)
+2. Emit lifecycle events for all processed messages
+3. Emit TickComplete event
+
+### Order Validation
+
+**Actual Behavior (Validated by Tests):**
+- **Tick size validation**: Price must align with `tick_size`
+- **Price domain validation**: Price must be within `[floor, ceil]`
+- **Rejection reason**: `RejectReason::BadTick` for validation failures
+- **Lifecycle events**: Rejected orders emit `LifecycleKind::Rejected` with reason
+
+**Example:**
+```rust
+// Invalid tick size (103 not aligned to tick=5)
+let msg = InboundMsg::submit(1, 1, Side::Buy, OrderType::Limit, Some(103), 10, 1000, 0, 1);
+// Results in: LifecycleKind::Rejected with RejectReason::BadTick
+```
+
+### Determinism & Replay
+
+**Actual Behavior (Validated by Tests):**
+- **Identical inputs** produce **identical outputs**
+- **Event counts** and **event contents** are deterministic
+- **Order processing** is stable across multiple runs
+- **No race conditions** or non-deterministic behavior
+
+**Test Validation:**
+```rust
+// Same configuration and inputs
+let mut eng1 = Whistle::new(cfg.clone());
+let mut eng2 = Whistle::new(cfg);
+
+// Identical messages
+eng1.enqueue_message(msg.clone()).unwrap();
+eng2.enqueue_message(msg).unwrap();
+
+// Identical outputs
+let events1 = eng1.tick(100);
+let events2 = eng2.tick(100);
+assert_eq!(events1.len(), events2.len());
+// All event contents match exactly
+```
