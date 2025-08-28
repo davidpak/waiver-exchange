@@ -239,15 +239,17 @@ fn print_help() {
 
 fn print_status(engine: &Whistle, tick: u64) {
     let (queue_len, queue_capacity) = engine.queue_stats();
-    
+
     println!("{}", "📊 Engine Status".cyan().bold());
     println!("  Tick: {tick}");
     println!("  Queue: {queue_len}/{queue_capacity} messages");
     println!("  Symbol: {}", engine.symbol());
-    println!("  Price Domain: {}-{} (tick: {})", 
-        engine.price_domain().floor, 
-        engine.price_domain().ceil, 
-        engine.price_domain().tick);
+    println!(
+        "  Price Domain: {}-{} (tick: {})",
+        engine.price_domain().floor,
+        engine.price_domain().ceil,
+        engine.price_domain().tick
+    );
 }
 
 fn process_tick(engine: &mut Whistle, tick: u64) -> u64 {
