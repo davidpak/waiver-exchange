@@ -49,6 +49,27 @@ enum Commands {
         #[arg(short, long, default_value = "42")]
         symbol: u32,
     },
+
+    /// Run comprehensive validation tests
+    TestValidation {
+        /// Symbol ID for testing
+        #[arg(short, long, default_value = "42")]
+        symbol: u32,
+    },
+
+    /// Run determinism and replay tests
+    TestDeterminism {
+        /// Symbol ID for testing
+        #[arg(short, long, default_value = "42")]
+        symbol: u32,
+    },
+
+    /// Run capacity and backpressure tests
+    TestCapacity {
+        /// Symbol ID for testing
+        #[arg(short, long, default_value = "42")]
+        symbol: u32,
+    },
 }
 
 fn main() {
@@ -67,6 +88,15 @@ fn main() {
         }
         Commands::Demo { symbol } => {
             run_demo(symbol);
+        }
+        Commands::TestValidation { symbol } => {
+            run_validation_tests(symbol);
+        }
+        Commands::TestDeterminism { symbol } => {
+            run_determinism_tests(symbol);
+        }
+        Commands::TestCapacity { symbol } => {
+            run_capacity_tests(symbol);
         }
     }
 }
@@ -135,6 +165,12 @@ fn run_interactive(
             }
             "demo" | "d" => {
                 run_quick_demo(&mut engine, &mut tick);
+            }
+            "validate" | "v" => {
+                run_validation_demo(&mut engine, &mut tick);
+            }
+            "capacity" | "cap" => {
+                run_capacity_demo(&mut engine, &mut tick);
             }
             _ => {
                 if let Some(args) = input.strip_prefix("submit ") {
@@ -226,6 +262,8 @@ fn print_help() {
     println!("  cancel, can      - Cancel order (interactive)");
     println!("  clear, c         - Clear the message queue");
     println!("  demo, d          - Run quick demo");
+    println!("  validate, v      - Run validation demo");
+    println!("  capacity, cap    - Run capacity demo");
     println!();
     println!("{}", "Quick Commands:".cyan().bold());
     println!("  submit <args>    - Submit order with arguments");
@@ -473,4 +511,318 @@ fn generate_timestamp() -> u64 {
 fn generate_enq_seq() -> u32 {
     use std::time::{SystemTime, UNIX_EPOCH};
     (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos() % 1000) as u32
+}
+
+fn run_validation_tests(symbol: u32) {
+    println!("{}", "🧪 Running Validation Tests".green().bold());
+    println!("Testing order validation, price domain, and tick size compliance");
+    println!();
+
+    let cfg = EngineCfg {
+        symbol,
+        price_domain: PriceDomain { floor: 100, ceil: 200, tick: 5 },
+        bands: Bands { mode: BandMode::Percent(1000) },
+        batch_max: 1024,
+        arena_capacity: 4096,
+        elastic_arena: false,
+        exec_shift_bits: 12,
+        exec_id_mode: ExecIdMode::Sharded,
+        self_match_policy: SelfMatchPolicy::Skip,
+        allow_market_cold_start: false,
+        reference_price_source: ReferencePriceSource::SnapshotLastTrade,
+    };
+
+    let mut engine = Whistle::new(cfg);
+    let tick = 100u64;
+
+    // Test 1: Invalid tick size
+    println!("{}", "Test 1: Invalid tick size (103 with tick=5)".cyan());
+    let invalid_tick_msg =
+        InboundMsg::submit(1, 1, Side::Buy, OrderType::Limit, Some(103), 10, 1000, 0, 1);
+    engine.enqueue_message(invalid_tick_msg).unwrap();
+    let events = engine.tick(tick);
+
+    let lifecycle_events: Vec<_> = events
+        .iter()
+        .filter_map(|e| if let whistle::EngineEvent::Lifecycle(ev) = e { Some(ev) } else { None })
+        .collect();
+
+    if let Some(rejected_event) = lifecycle_events.first() {
+        println!("  ✓ Rejected with reason: {:?}", rejected_event.reason);
+    } else {
+        println!("  ✗ Expected rejection event");
+    }
+    println!();
+
+    // Test 2: Price domain violation
+    println!("{}", "Test 2: Price domain violation (price 50 < floor 100)".cyan());
+    let invalid_price_msg =
+        InboundMsg::submit(2, 2, Side::Buy, OrderType::Limit, Some(50), 10, 1001, 0, 2);
+    engine.enqueue_message(invalid_price_msg).unwrap();
+    let events = engine.tick(tick);
+
+    let lifecycle_events: Vec<_> = events
+        .iter()
+        .filter_map(|e| if let whistle::EngineEvent::Lifecycle(ev) = e { Some(ev) } else { None })
+        .collect();
+
+    if let Some(rejected_event) = lifecycle_events.first() {
+        println!("  ✓ Rejected with reason: {:?}", rejected_event.reason);
+    } else {
+        println!("  ✗ Expected rejection event");
+    }
+    println!();
+
+    // Test 3: Valid order
+    println!("{}", "Test 3: Valid order (price 150, tick-aligned)".cyan());
+    let valid_msg =
+        InboundMsg::submit(3, 3, Side::Buy, OrderType::Limit, Some(150), 10, 1002, 0, 3);
+    engine.enqueue_message(valid_msg).unwrap();
+    let events = engine.tick(tick);
+
+    let lifecycle_events: Vec<_> = events
+        .iter()
+        .filter_map(|e| if let whistle::EngineEvent::Lifecycle(ev) = e { Some(ev) } else { None })
+        .collect();
+
+    if let Some(accepted_event) = lifecycle_events.first() {
+        println!("  ✓ Accepted: {:?}", accepted_event.kind);
+    } else {
+        println!("  ✗ Expected acceptance event");
+    }
+    println!();
+
+    println!("{}", "✅ Validation tests completed!".green().bold());
+}
+
+fn run_determinism_tests(symbol: u32) {
+    println!("{}", "🔄 Running Determinism Tests".green().bold());
+    println!("Testing that identical inputs produce identical outputs");
+    println!();
+
+    let cfg = EngineCfg {
+        symbol,
+        price_domain: PriceDomain { floor: 100, ceil: 200, tick: 5 },
+        bands: Bands { mode: BandMode::Percent(1000) },
+        batch_max: 1024,
+        arena_capacity: 4096,
+        elastic_arena: false,
+        exec_shift_bits: 12,
+        exec_id_mode: ExecIdMode::Sharded,
+        self_match_policy: SelfMatchPolicy::Skip,
+        allow_market_cold_start: false,
+        reference_price_source: ReferencePriceSource::SnapshotLastTrade,
+    };
+
+    // Run the same sequence twice
+    let mut engine1 = Whistle::new(cfg);
+    let mut engine2 = Whistle::new(cfg);
+
+    // Submit identical orders
+    let msg1 = InboundMsg::submit(1, 1, Side::Buy, OrderType::Limit, Some(150), 10, 1000, 0, 1);
+    let msg2 = InboundMsg::submit(2, 2, Side::Sell, OrderType::Limit, Some(160), 5, 1001, 0, 2);
+
+    engine1.enqueue_message(msg1.clone()).unwrap();
+    engine1.enqueue_message(msg2.clone()).unwrap();
+    engine2.enqueue_message(msg1).unwrap();
+    engine2.enqueue_message(msg2).unwrap();
+
+    let events1 = engine1.tick(100);
+    let events2 = engine2.tick(100);
+
+    // Compare events
+    println!("{}", "Comparing event outputs...".cyan());
+    println!("  Engine 1: {} events", events1.len());
+    println!("  Engine 2: {} events", events2.len());
+
+    if events1.len() == events2.len() {
+        println!("  ✓ Event counts match");
+
+        let mut all_match = true;
+        for (i, (e1, e2)) in events1.iter().zip(events2.iter()).enumerate() {
+            if format!("{e1:?}") != format!("{e2:?}") {
+                println!("  ✗ Event {} differs", i + 1);
+                all_match = false;
+            }
+        }
+
+        if all_match {
+            println!("  ✓ All events match exactly");
+        }
+    } else {
+        println!("  ✗ Event counts differ");
+    }
+    println!();
+
+    println!("{}", "✅ Determinism tests completed!".green().bold());
+}
+
+fn run_capacity_tests(symbol: u32) {
+    println!("{}", "📊 Running Capacity Tests".green().bold());
+    println!("Testing arena capacity limits and queue backpressure");
+    println!();
+
+    // Test 1: Arena capacity limits
+    println!("{}", "Test 1: Arena capacity limits".cyan());
+    let cfg = EngineCfg {
+        symbol,
+        price_domain: PriceDomain { floor: 100, ceil: 200, tick: 5 },
+        bands: Bands { mode: BandMode::Percent(1000) },
+        batch_max: 1024,
+        arena_capacity: 8, // Small arena for testing
+        elastic_arena: false,
+        exec_shift_bits: 12,
+        exec_id_mode: ExecIdMode::Sharded,
+        self_match_policy: SelfMatchPolicy::Skip,
+        allow_market_cold_start: false,
+        reference_price_source: ReferencePriceSource::SnapshotLastTrade,
+    };
+
+    let mut engine = Whistle::new(cfg);
+    let tick = 100u64;
+
+    // Submit orders up to capacity
+    for i in 1u32..=10 {
+        let msg = InboundMsg::submit(
+            i as u64,
+            i as u64,
+            Side::Buy,
+            OrderType::Limit,
+            Some(150 + i),
+            10,
+            1000 + i as u64,
+            0,
+            i,
+        );
+        match engine.enqueue_message(msg) {
+            Ok(()) => println!("  Order {i}: Enqueued"),
+            Err(e) => println!("  Order {i}: Rejected - {e:?}"),
+        }
+    }
+
+    let events = engine.tick(tick);
+
+    let lifecycle_events: Vec<_> = events
+        .iter()
+        .filter_map(|e| if let whistle::EngineEvent::Lifecycle(ev) = e { Some(ev) } else { None })
+        .collect();
+
+    println!("  Generated {} lifecycle events", lifecycle_events.len());
+    println!();
+
+    // Test 2: Queue backpressure
+    println!("{}", "Test 2: Queue backpressure".cyan());
+    let cfg = EngineCfg {
+        symbol,
+        price_domain: PriceDomain { floor: 100, ceil: 200, tick: 5 },
+        bands: Bands { mode: BandMode::Percent(1000) },
+        batch_max: 2, // Very small batch size
+        arena_capacity: 4096,
+        elastic_arena: false,
+        exec_shift_bits: 12,
+        exec_id_mode: ExecIdMode::Sharded,
+        self_match_policy: SelfMatchPolicy::Skip,
+        allow_market_cold_start: false,
+        reference_price_source: ReferencePriceSource::SnapshotLastTrade,
+    };
+
+    let mut engine = Whistle::new(cfg);
+
+    // Submit more messages than the queue can hold
+    for i in 1u32..=5 {
+        let msg = InboundMsg::submit(
+            i as u64,
+            i as u64,
+            Side::Buy,
+            OrderType::Limit,
+            Some(150),
+            10,
+            1000 + i as u64,
+            0,
+            i,
+        );
+        match engine.enqueue_message(msg) {
+            Ok(()) => println!("  Message {i}: Accepted"),
+            Err(e) => println!("  Message {i}: Rejected - {e:?}"),
+        }
+    }
+    println!();
+
+    println!("{}", "✅ Capacity tests completed!".green().bold());
+}
+
+fn run_validation_demo(engine: &mut Whistle, tick: &mut u64) {
+    println!("{}", "🧪 Running Validation Demo".cyan());
+
+    // Test invalid tick size
+    println!("  Testing invalid tick size (103 with tick=5)...");
+    let invalid_tick_msg =
+        InboundMsg::submit(1, 1, Side::Buy, OrderType::Limit, Some(103), 10, 1000, 0, 1);
+    engine.enqueue_message(invalid_tick_msg).unwrap();
+    let events = engine.tick(*tick);
+    *tick += 1;
+
+    let lifecycle_events: Vec<_> = events
+        .iter()
+        .filter_map(|e| if let whistle::EngineEvent::Lifecycle(ev) = e { Some(ev) } else { None })
+        .collect();
+
+    if let Some(rejected_event) = lifecycle_events.first() {
+        println!("    ✓ Rejected: {:?}", rejected_event.reason);
+    }
+
+    // Test valid order
+    println!("  Testing valid order (price 150)...");
+    let valid_msg =
+        InboundMsg::submit(2, 2, Side::Buy, OrderType::Limit, Some(150), 10, 1001, 0, 2);
+    engine.enqueue_message(valid_msg).unwrap();
+    let events = engine.tick(*tick);
+    *tick += 1;
+
+    let lifecycle_events: Vec<_> = events
+        .iter()
+        .filter_map(|e| if let whistle::EngineEvent::Lifecycle(ev) = e { Some(ev) } else { None })
+        .collect();
+
+    if let Some(accepted_event) = lifecycle_events.first() {
+        println!("    ✓ Accepted: {:?}", accepted_event.kind);
+    }
+
+    println!("{}", "✅ Validation demo completed!".green());
+}
+
+fn run_capacity_demo(engine: &mut Whistle, tick: &mut u64) {
+    println!("{}", "📊 Running Capacity Demo".cyan());
+
+    // Test queue backpressure
+    println!("  Testing queue backpressure...");
+    for i in 1u32..=5 {
+        let msg = InboundMsg::submit(
+            i as u64,
+            i as u64,
+            Side::Buy,
+            OrderType::Limit,
+            Some(150),
+            10,
+            1000 + i as u64,
+            0,
+            i,
+        );
+        match engine.enqueue_message(msg) {
+            Ok(()) => println!("    Message {i}: Accepted"),
+            Err(e) => println!("    Message {i}: Rejected - {e:?}"),
+        }
+    }
+
+    // Process tick to see events
+    println!("  Processing tick...");
+    let events = engine.tick(*tick);
+    *tick += 1;
+
+    println!("    Generated {} events", events.len());
+    for (i, event) in events.iter().enumerate() {
+        println!("      {}. {:?}", i + 1, event);
+    }
+
+    println!("{}", "✅ Capacity demo completed!".green());
 }
