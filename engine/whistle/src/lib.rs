@@ -435,15 +435,14 @@ mod tests {
         let mut eng = Whistle::new(cfg);
 
         // Test invalid tick size (103 not aligned to tick=5)
-        let invalid_tick_msg =
-            InboundMsg::submit(1, 1, Side::Buy, OrderType::Limit, Some(103), 10, 1000, 0, 1);
+        let invalid_tick_msg = InboundMsg::submit(1, 1, Side::Buy, OrderType::Limit, Some(103), 10, 1000, 0, 1);
         eng.enqueue_message(invalid_tick_msg).unwrap();
 
         let events = eng.tick(100);
-
+        
         // Should have 2 events: 1 rejected lifecycle + 1 tick complete
         assert_eq!(events.len(), 2);
-
+        
         match &events[0] {
             EngineEvent::Lifecycle(ev) => {
                 assert_eq!(ev.symbol, 42);
@@ -494,7 +493,7 @@ mod tests {
 
         // Verify canonical order: Lifecycle events first, then TickComplete
         assert!(events.len() >= 2); // At least lifecycle events + tick complete
-
+        
         // All lifecycle events should come before TickComplete
         let mut found_tick_complete = false;
         for event in &events {
@@ -511,7 +510,7 @@ mod tests {
                 }
             }
         }
-
+        
         // Must have exactly one TickComplete at the end
         assert!(found_tick_complete, "Must have TickComplete event");
     }
@@ -534,15 +533,14 @@ mod tests {
         let mut eng = Whistle::new(cfg);
 
         // Submit a limit order that should rest in the book
-        let buy_order =
-            InboundMsg::submit(1, 1, Side::Buy, OrderType::Limit, Some(150), 10, 1000, 0, 1);
+        let buy_order = InboundMsg::submit(1, 1, Side::Buy, OrderType::Limit, Some(150), 10, 1000, 0, 1);
         eng.enqueue_message(buy_order).unwrap();
 
         let events = eng.tick(100);
-
+        
         // Should be accepted and added to book
         assert_eq!(events.len(), 2); // Lifecycle + TickComplete
-
+        
         match &events[0] {
             EngineEvent::Lifecycle(ev) => {
                 assert_eq!(ev.kind, LifecycleKind::Accepted);
@@ -552,15 +550,14 @@ mod tests {
         }
 
         // Submit another order in next tick
-        let sell_order =
-            InboundMsg::submit(2, 2, Side::Sell, OrderType::Limit, Some(160), 5, 1001, 0, 1);
+        let sell_order = InboundMsg::submit(2, 2, Side::Sell, OrderType::Limit, Some(160), 5, 1001, 0, 1);
         eng.enqueue_message(sell_order).unwrap();
 
         let events2 = eng.tick(101);
-
+        
         // Should also be accepted
         assert_eq!(events2.len(), 2); // Lifecycle + TickComplete
-
+        
         match &events2[0] {
             EngineEvent::Lifecycle(ev) => {
                 assert_eq!(ev.kind, LifecycleKind::Accepted);
@@ -611,14 +608,21 @@ mod tests {
         let events = eng.tick(100);
 
         // Check how many lifecycle events we got
-        let lifecycle_events: Vec<_> = events
-            .iter()
-            .filter_map(|e| if let EngineEvent::Lifecycle(ev) = e { Some(ev) } else { None })
+        let lifecycle_events: Vec<_> = events.iter()
+            .filter_map(|e| {
+                if let EngineEvent::Lifecycle(ev) = e {
+                    Some(ev)
+                } else {
+                    None
+                }
+            })
             .collect();
 
+
+        
         // Should have 8 lifecycle events (all accepted, 9th rejected before processing)
         assert_eq!(lifecycle_events.len(), 8);
-
+        
         // Check that all 8 are accepted
         for i in 0..8 {
             assert_eq!(lifecycle_events[i].order_id, (i + 1) as u64);
@@ -660,7 +664,7 @@ mod tests {
 
         // Events should be identical (deterministic)
         assert_eq!(events1.len(), events2.len());
-
+        
         for (e1, e2) in events1.iter().zip(events2.iter()) {
             match (e1, e2) {
                 (EngineEvent::Lifecycle(ev1), EngineEvent::Lifecycle(ev2)) => {
@@ -702,22 +706,11 @@ mod tests {
 
         // Fill the queue
         for i in 0..10 {
-            let msg = InboundMsg::submit(
-                i,
-                i,
-                Side::Buy,
-                OrderType::Limit,
-                Some(150),
-                10,
-                1000 + i,
-                0,
-                i as u32,
-            );
+            let msg = InboundMsg::submit(i, i, Side::Buy, OrderType::Limit, Some(150), 10, 1000 + i, 0, i as u32);
             let result = eng.enqueue_message(msg);
-
+            
             // Should accept first few, then reject due to backpressure
-            if i < 1 {
-                // Queue capacity is 2, so can hold 1 message before full
+            if i < 1 { // Queue capacity is 2, so can hold 1 message before full
                 assert!(result.is_ok(), "Should accept message {}", i);
             } else {
                 assert!(result.is_err(), "Should reject message {} due to backpressure", i);
