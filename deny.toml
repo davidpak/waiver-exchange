@@ -17,12 +17,13 @@ allow = [
     "BSD-2-Clause",
     "BSD-3-Clause",
     "ISC",
+    "MPL-2.0",
     "Unicode-DFS-2016",
     "Unicode-3.0",
 ]
 confidence-threshold = 0.8
-# Optional: warn if you list a license in `allow` that isn’t used.
-unused-allowed-license = "warn"
+# Optional: warn if you list a license in `allow` that isn't used.
+unused-allowed-license = "allow"
 
 [licenses.private]
 ignore = true
