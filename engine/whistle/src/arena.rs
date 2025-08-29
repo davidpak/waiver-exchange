@@ -100,6 +100,15 @@ impl Arena {
         assert!(self.used[i], "get_mut: slot not in use");
         &mut self.buf[i]
     }
+
+    #[inline]
+    pub fn is_valid(&self, h: OrderHandle) -> bool {
+        if h == H_NONE {
+            return false;
+        }
+        let i = h.0 as usize;
+        i < self.buf.len() && self.used[i]
+    }
 }
 
 #[cfg(test)]

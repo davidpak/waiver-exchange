@@ -8,10 +8,20 @@ pub type TsNorm = u64;
 pub type EnqSeq = u32;
 
 #[repr(u8)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum Side {
     Buy = 0,
     Sell = 1,
+}
+
+impl Side {
+    /// Get the opposite side
+    pub fn opposite(&self) -> Side {
+        match self {
+            Side::Buy => Side::Sell,
+            Side::Sell => Side::Buy,
+        }
+    }
 }
 
 #[repr(u8)]

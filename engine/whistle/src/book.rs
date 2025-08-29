@@ -213,6 +213,11 @@ impl Book {
     pub fn level_qty(&self, side: Side, i: PriceIdx) -> Qty {
         self.levels(side)[i as usize].total_qty
     }
+
+    #[inline]
+    pub fn level_head(&self, side: Side, i: PriceIdx) -> OrderHandle {
+        self.levels(side)[i as usize].head
+    }
 }
 
 #[cfg(test)]

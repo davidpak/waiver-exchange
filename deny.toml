@@ -20,6 +20,8 @@ allow = [
     "MPL-2.0",
     "Unicode-DFS-2016",
     "Unicode-3.0",
+    "Zlib",
+    "CC0-1.0",
 ]
 confidence-threshold = 0.8
 # Optional: warn if you list a license in `allow` that isn't used.

@@ -10,7 +10,7 @@ pub struct Bands {
     pub mode: BandMode,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SelfMatchPolicy {
     Skip,
     CancelResting,
