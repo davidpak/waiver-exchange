@@ -241,13 +241,11 @@ impl Whistle {
         orders_to_match: &mut [OrderHandle],
         tick: TickId,
     ) -> Vec<(OrderId, RejectReason)> {
-        // Clear modified levels tracking for this tick
         self.modified_levels.clear();
 
         let mut rejections = Vec::new();
 
         for handle in orders_to_match.iter() {
-            // Extract order data to avoid borrow checker issues
             let order_data = {
                 let order = self.arena.get(*handle);
                 (order.id, order.side, order.price_idx, order.qty_open, order.typ, order.acct)
@@ -256,97 +254,85 @@ impl Whistle {
             let (order_id, order_side, order_price_idx, order_qty, order_typ, order_acct) =
                 order_data;
 
-            // Based on whistle.md line 113: "POST‑ONLY: if it would cross at submitted price → Reject(PostOnlyCross)"
-            if order_typ == 3 {
-                // OrderType::PostOnly
-                if self.would_cross(order_side, order_price_idx) {
-                    // Reject POST-ONLY order that would cross
-                    rejections.push((order_id, RejectReason::PostOnlyCross));
-                    // Free the order from arena
-                    self.arena.free(*handle);
-                    continue;
-                }
+            if order_typ == 3 && self.would_cross(order_side, order_price_idx) {
+                rejections.push((order_id, RejectReason::PostOnlyCross));
+                self.arena.free(*handle);
+                continue;
             }
 
-            // Try to match the order against the book
             let mut remaining_qty = order_qty;
 
-            // Based on whistle.md line 111: "Priority: strict price‑time. Key = (timestamp_normalized, enqueue_sequence)"
-            // Implement proper matching that finds and updates resting orders
-            let best_opposite = self.get_best_opposite_price(order_side);
+            while remaining_qty > 0 {
+                let best_opposite = self.get_best_opposite_price(order_side);
 
-            if let Some(best_price) = best_opposite {
-                // Check if we can match at this price
-                if self.can_match_at_price(order_side, order_price_idx, best_price) {
-                    // Check for self-match prevention
-                    // Based on whistle.md line 118: "Self‑match policy: default prevent; deterministically skip same‑account counterparties"
-                    if self.cfg.self_match_policy == SelfMatchPolicy::Skip {
-                        // Find the resting order at the best opposite price (FIFO order)
+                if let Some(best_price) = best_opposite {
+                    if self.can_match_at_price(order_side, order_price_idx, best_price) {
                         let opposite_side = order_side.opposite();
-                        let maker_handle = self.book.level_head(opposite_side, best_price);
+                        let mut maker_handle = self.book.level_head(opposite_side, best_price);
 
-                        if maker_handle != H_NONE {
-                            let maker_order = self.arena.get(maker_handle);
-                            // Skip if maker and taker are from the same account
-                            if maker_order.acct == order_acct {
-                                continue;
+                        let mut traded_at_this_level = false;
+
+                        while maker_handle != H_NONE && remaining_qty > 0 {
+                            if self.cfg.self_match_policy == SelfMatchPolicy::Skip {
+                                let maker_order = self.arena.get(maker_handle);
+                                if maker_order.acct == order_acct {
+                                    maker_handle = maker_order.next;
+                                    continue;
+                                }
                             }
-                        }
-                    }
 
-                    // Find the resting order at the best opposite price (FIFO order)
-                    let opposite_side = order_side.opposite();
-                    let maker_handle = self.book.level_head(opposite_side, best_price);
+                            let maker_data = {
+                                let maker_order = self.arena.get(maker_handle);
+                                (maker_order.id, maker_order.qty_open, maker_order.next)
+                            };
 
-                    if maker_handle != H_NONE {
-                        // Extract maker order data to avoid borrow checker issues
-                        let maker_data = {
-                            let maker_order = self.arena.get(maker_handle);
-                            (maker_order.id, maker_order.qty_open)
-                        };
+                            let (maker_id, maker_qty, next_handle) = maker_data;
 
-                        // Determine trade quantity (min of taker and maker quantities)
-                        let trade_qty = std::cmp::min(remaining_qty, maker_data.1);
+                            let trade_qty = std::cmp::min(remaining_qty, maker_qty);
 
-                        // Generate trade event
-                        let trade = EvTrade {
-                            symbol: self.cfg.symbol,
-                            tick,
-                            exec_id: self.next_exec_id(tick),
-                            price: self.dom.price(best_price),
-                            qty: trade_qty,
-                            taker_side: order_side,
-                            maker_order: maker_data.0,
-                            taker_order: order_id,
-                        };
-                        self.emitter
-                            .emit(EngineEvent::Trade(trade))
-                            .expect("Trade event should always be valid");
+                            let trade = EvTrade {
+                                symbol: self.cfg.symbol,
+                                tick,
+                                exec_id: self.next_exec_id(tick),
+                                price: self.dom.price(best_price),
+                                qty: trade_qty,
+                                taker_side: order_side,
+                                maker_order: maker_id,
+                                taker_order: order_id,
+                            };
+                            self.emitter
+                                .emit(EngineEvent::Trade(trade))
+                                .expect("Trade event should always be valid");
 
-                        // Update the resting order (maker)
-                        let maker_remaining = maker_data.1 - trade_qty;
+                            let maker_remaining = maker_qty - trade_qty;
 
-                        if maker_remaining == 0 {
-                            // Full fill - remove the order from the book
-                            self.book.unlink(&mut self.arena, opposite_side, maker_handle);
-                            // Free the order from arena
-                            self.arena.free(maker_handle);
-                        } else {
-                            // Partial fill - update the order quantity
-                            {
-                                let maker_order_mut = self.arena.get_mut(maker_handle);
-                                maker_order_mut.qty_open = maker_remaining;
+                            if maker_remaining == 0 {
+                                self.book.unlink(&mut self.arena, opposite_side, maker_handle);
+                                self.arena.free(maker_handle);
+                            } else {
+                                {
+                                    let maker_order_mut = self.arena.get_mut(maker_handle);
+                                    maker_order_mut.qty_open = maker_remaining;
+                                }
+                                self.book.partial_fill(opposite_side, best_price, trade_qty);
                             }
-                            // Update the book level total
-                            self.book.partial_fill(opposite_side, best_price, trade_qty);
+
+                            self.modified_levels.insert((opposite_side, best_price));
+
+                            remaining_qty -= trade_qty;
+                            traded_at_this_level = true;
+
+                            maker_handle = next_handle;
                         }
 
-                        // Mark level as modified
-                        self.modified_levels.insert((opposite_side, best_price));
-
-                        // Update remaining quantity for the taker order
-                        remaining_qty -= trade_qty;
+                        if !traded_at_this_level {
+                            break;
+                        }
+                    } else {
+                        break;
                     }
+                } else {
+                    break;
                 }
             }
 
@@ -355,27 +341,25 @@ impl Whistle {
                 0 => {
                     // OrderType::Limit
                     if remaining_qty > 0 {
-                        // Add remaining quantity to book
                         self.add_to_book(*handle, remaining_qty);
                     }
                 }
-                1 => { // OrderType::Market
-                    // Based on whistle.md line 113: "MARKET: consume best prices until filled or book exhausted; never rests"
-                    // Market orders never rest - remaining quantity is lost if book exhausted
+                1 => {
+                    // OrderType::Market
+                    if remaining_qty > 0 {
+                        // Market orders with remaining quantity should be accepted but not rest in book
+                        // The order is already freed when fully matched, so we just don't add to book
+                    }
                 }
                 2 => {
-                    // OrderType::Ioc
-                    // Based on whistle.md line 113: "IOC: like MARKET but price‑capped to submitted price; remainder cancels"
-                    // IOC orders that can't match should be rejected
+                    // OrderType::IOC
                     if remaining_qty > 0 {
-                        rejections.push((order_id, RejectReason::OutOfBand));
-                        // Free the order from arena
-                        self.arena.free(*handle);
+                        // IOC orders with remaining quantity should be canceled (not rejected)
+                        // The order is already freed when fully matched, so we just don't add to book
                     }
                 }
                 3 => {
                     // OrderType::PostOnly
-                    // POST-ONLY orders that don't cross are added to book
                     if remaining_qty > 0 {
                         self.add_to_book(*handle, remaining_qty);
                     }
@@ -385,7 +369,6 @@ impl Whistle {
                 }
             }
 
-            // If order was fully matched, free it from arena
             if remaining_qty == 0 {
                 self.arena.free(*handle);
             }
@@ -459,7 +442,7 @@ impl Whistle {
     fn would_cross(&self, side: Side, price_idx: PriceIdx) -> bool {
         match side {
             Side::Buy => {
-                // Buy order would cross if price >= best ask
+                // POST-ONLY buy order would cross if price >= best ask (opposite side)
                 if let Some(best_ask) = self.book.best_ask() {
                     price_idx >= best_ask
                 } else {
@@ -467,7 +450,7 @@ impl Whistle {
                 }
             }
             Side::Sell => {
-                // Sell order would cross if price <= best bid
+                // POST-ONLY sell order would cross if price <= best bid (opposite side)
                 if let Some(best_bid) = self.book.best_bid() {
                     price_idx <= best_bid
                 } else {
