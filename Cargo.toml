@@ -4,5 +4,5 @@ members = [
     "engine/whistle",
     "engine/whistle-bench",
     "tools/whistle-playground",
-    # "tools/whistle-monitor",
+    "tools/whistle-monitor",
 ]
