@@ -1,6 +1,7 @@
 // SPSC (Single Producer, Single Consumer) ring buffer for InboundMsg
 
 use crate::{InboundMsg, RejectReason};
+use std::cell::UnsafeCell;
 
 /// SPSC ring buffer for inbound messages from OrderRouter
 ///
@@ -10,14 +11,22 @@ use crate::{InboundMsg, RejectReason};
 /// - Non-blocking backpressure: full queue causes immediate rejection
 /// - Fixed capacity to prevent unbounded memory growth
 /// - Atomic operations for thread safety
+/// - Interior mutability for lock-free access
 #[derive(Debug)]
 pub struct InboundQueue {
-    buffer: Box<[Option<InboundMsg>]>,
+    buffer: Box<[UnsafeCell<Option<InboundMsg>>]>,
     capacity: usize,
     mask: usize,
     head: std::sync::atomic::AtomicUsize,
     tail: std::sync::atomic::AtomicUsize,
 }
+
+// SAFETY: InboundQueue is safe to send and sync because:
+// - All fields are Send + Sync
+// - Atomic operations provide thread safety
+// - UnsafeCell is used correctly for interior mutability
+unsafe impl Send for InboundQueue {}
+unsafe impl Sync for InboundQueue {}
 
 impl InboundQueue {
     /// Create a new SPSC queue with the specified capacity
@@ -26,10 +35,13 @@ impl InboundQueue {
     /// This is enforced by rounding up to the next power of 2.
     pub fn new(capacity: usize) -> Self {
         let actual_capacity = capacity.next_power_of_two();
-        let buffer = vec![None; actual_capacity].into_boxed_slice();
+        let mut buffer = Vec::with_capacity(actual_capacity);
+        for _ in 0..actual_capacity {
+            buffer.push(UnsafeCell::new(None));
+        }
 
         Self {
-            buffer,
+            buffer: buffer.into_boxed_slice(),
             capacity: actual_capacity,
             mask: actual_capacity - 1,
             head: std::sync::atomic::AtomicUsize::new(0),
@@ -73,6 +85,15 @@ impl InboundQueue {
     /// This operation is designed to be called by OrderRouter.
     #[inline]
     pub fn try_enqueue(&mut self, msg: InboundMsg) -> Result<(), RejectReason> {
+        self.try_enqueue_lockfree(msg)
+    }
+
+    /// Lock-free enqueue operation (does not require mutable access)
+    ///
+    /// This is the same as try_enqueue but doesn't require &mut self,
+    /// making it suitable for shared access in SPSC scenarios.
+    #[inline]
+    pub fn try_enqueue_lockfree(&self, msg: InboundMsg) -> Result<(), RejectReason> {
         let tail = self.tail.load(std::sync::atomic::Ordering::Acquire);
         let next_tail = (tail + 1) & self.mask;
         let head = self.head.load(std::sync::atomic::Ordering::Acquire);
@@ -89,8 +110,8 @@ impl InboundQueue {
         ) {
             Ok(_) => {
                 unsafe {
-                    let slot = self.buffer.get_unchecked_mut(tail);
-                    *slot = Some(msg);
+                    let slot = self.buffer.get_unchecked(tail);
+                    *slot.get() = Some(msg);
                 }
                 Ok(())
             }
@@ -124,8 +145,8 @@ impl InboundQueue {
             std::sync::atomic::Ordering::Acquire,
         ) {
             Ok(_) => unsafe {
-                let slot = self.buffer.get_unchecked_mut(head);
-                slot.take()
+                let slot = self.buffer.get_unchecked(head);
+                (*slot.get()).take()
             },
             Err(_) => None,
         }
@@ -208,6 +229,17 @@ mod tests {
         assert_eq!(queue.try_enqueue(msg2), Err(RejectReason::QueueBackpressure));
 
         assert_eq!(queue.try_enqueue(msg3), Err(RejectReason::QueueBackpressure));
+    }
+
+    #[test]
+    fn test_lockfree_interface() {
+        let queue = InboundQueue::new(4);
+        let msg = InboundMsg::submit(1, 1, Side::Buy, OrderType::Limit, Some(100), 10, 1000, 0, 1);
+
+        // Test that we can enqueue using the lock-free interface
+        assert!(queue.try_enqueue_lockfree(msg).is_ok());
+        assert!(!queue.is_empty());
+        assert_eq!(queue.len(), 1);
     }
 
     #[test]

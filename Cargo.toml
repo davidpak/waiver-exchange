@@ -3,6 +3,8 @@ resolver = "2"
 members = [
     "engine/whistle",
     "engine/whistle-bench",
+    "engine/order-router",
+    "engine/symbol-coordinator",
     "tools/whistle-playground",
     "tools/whistle-monitor",
 ]

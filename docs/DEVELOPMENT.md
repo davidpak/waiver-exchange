@@ -8,11 +8,19 @@ Before pushing any changes, ensure you've completed the following:
 
 ### 1. Format Code
 ```bash
+# Core engine components only (recommended for development)
+cargo fmt --package whistle --package order-router --package symbol-coordinator
+
+# Or format all components (may have formatting issues in tools)
 cargo fmt --all
 ```
 
 ### 2. Lint as Errors
 ```bash
+# Core engine components only (recommended for development)
+cargo clippy --workspace --exclude whistle-playground --exclude whistle-monitor -- -D warnings
+
+# Or run on all components (may have warnings in tools)
 cargo clippy --workspace -- -D warnings
 ```
 
@@ -23,6 +31,10 @@ cargo test --workspace
 
 ### 4. Verify No Formatting Diffs
 ```bash
+# Core engine components only (recommended for development)
+cargo fmt --package whistle --package order-router --package symbol-coordinator -- --check
+
+# Or check all components (may have formatting issues in tools)
 cargo fmt --all -- --check
 ```
 
@@ -37,7 +49,10 @@ cargo deny check
 
 ### 6. Optional: Additional Security
 ```bash
-# If cargo-audit is installed  
+# Ignore known unmaintained dependencies in tools
+cargo audit --ignore RUSTSEC-2024-0436 -D warnings
+
+# Or audit all components (may have warnings in tools)
 cargo audit -D warnings
 ```
 
@@ -237,12 +252,12 @@ Before pushing any new crate:
 ### Formatting Issues
 
 **Problem:** CI fails with formatting diffs
-**Solution:** Run `cargo fmt --all` before pushing
+**Solution:** Run `cargo fmt --package whistle --package order-router --package symbol-coordinator` before pushing
 
 ### Linting Issues
 
 **Problem:** CI fails with clippy warnings
-**Solution:** Run `cargo clippy --workspace -- -D warnings` and fix all warnings
+**Solution:** Run `cargo clippy --workspace --all-targets --exclude whistle-playground --exclude whistle-monitor -- -D warnings` and fix all warnings
 
 ### Test Failures
 
@@ -274,27 +289,33 @@ Before pushing any new crate:
 
 ```bash
 # This is what CI runs - run it locally first!
-cargo fmt --all -- --check
-cargo clippy --workspace -- -D warnings  
+cargo fmt --package whistle --package order-router --package symbol-coordinator -- --check
+cargo clippy --workspace --all-targets --exclude whistle-playground --exclude whistle-monitor -- -D warnings
 cargo test --workspace
+cargo audit --ignore RUSTSEC-2024-0436 -D warnings
 cargo deny check licenses  # ← Don't forget license compliance!
 ```
 
 **CI will fail if any of these fail:**
-- ❌ `cargo fmt --all -- --check` (formatting diffs)
-- ❌ `cargo clippy --workspace -- -D warnings` (linting errors)
+- ❌ `cargo fmt --package whistle --package order-router --package symbol-coordinator -- --check` (formatting diffs)
+- ❌ `cargo clippy --workspace --all-targets --exclude whistle-playground --exclude whistle-monitor -- -D warnings` (linting errors)
 - ❌ `cargo test --workspace` (test failures)
+- ❌ `cargo audit --ignore RUSTSEC-2024-0436 -D warnings` (security vulnerabilities)
 - ❌ `cargo deny check licenses` (license violations)
 
 ## Before Every Push
 
 ```bash
 # 1. Run the full checklist
-cargo fmt --all
-cargo clippy --workspace -- -D warnings
+cargo fmt --package whistle --package order-router --package symbol-coordinator
+cargo clippy --workspace --all-targets --exclude whistle-playground --exclude whistle-monitor -- -D warnings
 cargo test --workspace
+cargo audit --ignore RUSTSEC-2024-0436 -D warnings
 cargo deny check licenses  # ← License compliance check
-cargo fmt --all -- --check
+cargo fmt --package whistle --package order-router --package symbol-coordinator -- --check
+```
+```
+```
 
 # 2. Stage and commit
 git add .

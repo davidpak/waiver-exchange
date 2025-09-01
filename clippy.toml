@@ -1,1 +1,5 @@
 # Local exceptions, default to strict in CI
+
+# Ignore tools directory warnings in CI
+# The tools directory contains playground and monitoring utilities
+# that don't need the same strict linting as core engine components

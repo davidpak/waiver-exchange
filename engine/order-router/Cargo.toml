@@ -1,0 +1,17 @@
+[package]
+name = "order-router"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+
+[dependencies]
+whistle = { path = "../whistle" }
+siphasher = "1.0"
+crossbeam-queue = "0.3"
+
+[dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "routing_bench"
+harness = false
