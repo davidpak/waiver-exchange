@@ -366,12 +366,7 @@ fn main() {
         Commands::TestMultipleLevelMatching { symbol } => {
             test_multiple_level_matching(symbol);
         }
-        Commands::StartSession {
-            session_name,
-            symbol,
-            tick_interval_ms,
-            display,
-        } => {
+        Commands::StartSession { session_name, symbol, tick_interval_ms, display } => {
             start_session(session_name, symbol, tick_interval_ms, display);
         }
         Commands::ListSessions => {
@@ -1434,9 +1429,12 @@ impl SessionEngine {
     pub fn new(session_name: &str, symbol: u32) -> Result<Self, String> {
         let sessions_dir = std::env::temp_dir().join("whistle-exchange");
         let session_dir = sessions_dir.join(session_name);
-        
+
         if !session_dir.exists() {
-            return Err(format!("Session '{}' does not exist. Create it first with playground.", session_name));
+            return Err(format!(
+                "Session '{}' does not exist. Create it first with playground.",
+                session_name
+            ));
         }
 
         let cfg = EngineCfg {
@@ -1503,12 +1501,11 @@ impl SessionEngine {
             };
 
             // Only update display if there are changes or every 5 seconds
-            let should_update = display_mode != "minimal" && (
-                orders_processed > last_order_count || 
-                tick_processed || 
-                self.tick != last_tick_count ||
-                now.duration_since(last_display_update) >= Duration::from_secs(5)
-            );
+            let should_update = display_mode != "minimal"
+                && (orders_processed > last_order_count
+                    || tick_processed
+                    || self.tick != last_tick_count
+                    || now.duration_since(last_display_update) >= Duration::from_secs(5));
 
             if should_update {
                 if display_mode == "dashboard" {
@@ -1536,7 +1533,7 @@ impl SessionEngine {
 
         let lines: Vec<&str> = content.lines().collect();
         let mut orders_processed = 0;
-        
+
         // Process only new orders (after last_order_read)
         for (_line_num, line) in lines.iter().enumerate().skip(self.last_order_read as usize) {
             if line.trim().is_empty() {
@@ -1548,7 +1545,8 @@ impl SessionEngine {
 
             // Convert to InboundMsg and submit to engine
             if let Some(msg) = self.parse_order_to_message(&order_data)? {
-                self.engine.enqueue_message(msg)
+                self.engine
+                    .enqueue_message(msg)
                     .map_err(|e| format!("Failed to enqueue order: {:?}", e))?;
                 orders_processed += 1;
             }
@@ -1558,19 +1556,16 @@ impl SessionEngine {
         Ok(orders_processed)
     }
 
-    fn parse_order_to_message(&self, order_data: &serde_json::Value) -> Result<Option<InboundMsg>, String> {
-        let account_id = order_data["account_id"].as_u64()
-            .ok_or("Missing account_id")?;
-        let order_id = order_data["order_id"].as_u64()
-            .ok_or("Missing order_id")?;
-        let side_str = order_data["side"].as_str()
-            .ok_or("Missing side")?;
-        let order_type_str = order_data["order_type"].as_str()
-            .ok_or("Missing order_type")?;
-        let qty = order_data["qty"].as_u64()
-            .ok_or("Missing qty")?;
-        let timestamp = order_data["timestamp"].as_u64()
-            .unwrap_or(self.tick * 1000 + order_id);
+    fn parse_order_to_message(
+        &self,
+        order_data: &serde_json::Value,
+    ) -> Result<Option<InboundMsg>, String> {
+        let account_id = order_data["account_id"].as_u64().ok_or("Missing account_id")?;
+        let order_id = order_data["order_id"].as_u64().ok_or("Missing order_id")?;
+        let side_str = order_data["side"].as_str().ok_or("Missing side")?;
+        let order_type_str = order_data["order_type"].as_str().ok_or("Missing order_type")?;
+        let qty = order_data["qty"].as_u64().ok_or("Missing qty")?;
+        let timestamp = order_data["timestamp"].as_u64().unwrap_or(self.tick * 1000 + order_id);
 
         let side = match side_str {
             "buy" => Side::Buy,
@@ -1589,14 +1584,7 @@ impl SessionEngine {
         let price = order_data["price"].as_u64().map(|p| p as u32);
 
         let msg = InboundMsg::submit(
-            order_id,
-            account_id,
-            side,
-            order_type,
-            price,
-            qty as u32,
-            timestamp,
-            0, // flags
+            order_id, account_id, side, order_type, price, qty as u32, timestamp, 0, // flags
             1, // symbol - hardcoded for now
         );
 
@@ -1685,7 +1673,11 @@ impl SessionEngine {
         self.append_to_file(&book_file, &book_data)
     }
 
-    fn append_to_file(&self, file_path: &std::path::Path, data: &serde_json::Value) -> Result<(), String> {
+    fn append_to_file(
+        &self,
+        file_path: &std::path::Path,
+        data: &serde_json::Value,
+    ) -> Result<(), String> {
         let mut file = std::fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -1705,12 +1697,14 @@ impl SessionEngine {
         }
 
         println!("🔄 Tick {}: {} events", self.tick - 1, events.len());
-        
+
         for event in events {
             match event {
                 EngineEvent::Trade(trade) => {
-                    println!("  💰 Trade: {} @ {} (maker: {}, taker: {})", 
-                        trade.qty, trade.price, trade.maker_order, trade.taker_order);
+                    println!(
+                        "  💰 Trade: {} @ {} (maker: {}, taker: {})",
+                        trade.qty, trade.price, trade.maker_order, trade.taker_order
+                    );
                 }
                 EngineEvent::Lifecycle(lifecycle) => {
                     let status = match lifecycle.kind {
@@ -1721,9 +1715,12 @@ impl SessionEngine {
                     println!("  🔄 Order {}: {}", lifecycle.order_id, status);
                 }
                 EngineEvent::BookDelta(delta) => {
-                    println!("  📚 Book: {} @ {} (qty: {})", 
+                    println!(
+                        "  📚 Book: {} @ {} (qty: {})",
                         if delta.side == Side::Buy { "BUY" } else { "SELL" },
-                        delta.price, delta.level_qty_after);
+                        delta.price,
+                        delta.level_qty_after
+                    );
                 }
                 _ => {}
             }
@@ -1766,8 +1763,8 @@ impl SessionEngine {
         match (self.last_trade_price, self.last_trade_qty, self.last_trade_side) {
             (Some(price), Some(qty), Some(side)) => {
                 let colored_price = match side {
-                    Side::Buy => price.to_string().green(),  // Green for buy (taker bought)
-                    Side::Sell => price.to_string().red(),   // Red for sell (taker sold)
+                    Side::Buy => price.to_string().green(), // Green for buy (taker bought)
+                    Side::Sell => price.to_string().red(),  // Red for sell (taker sold)
                 };
                 println!("    {} @ {} ({} units)", "Last Trade:".bold(), colored_price, qty);
             }
@@ -1813,11 +1810,11 @@ impl SessionEngine {
         static mut FIRST_RUN: bool = true;
         static mut LAST_TICK: u64 = 0;
         static mut LAST_ORDERS: u64 = 0;
-        
+
         unsafe {
             let tick_changed = self.tick != LAST_TICK;
             let orders_changed = self.last_order_read != LAST_ORDERS;
-            
+
             if FIRST_RUN || tick_changed || orders_changed {
                 // Clear screen and redraw
                 print!("\x1B[2J\x1B[1;1H"); // Clear screen
@@ -1825,17 +1822,17 @@ impl SessionEngine {
                 println!("🕐 Tick: {} | Symbol: 1", self.tick);
                 println!("📁 Session: {}", self.session_dir.display());
                 println!();
-                
+
                 // Show the beautiful order book display
                 self.display_session_order_book();
-                
+
                 // Show recent activity summary
                 println!("📊 Session Status:");
                 println!("  🔄 Orders Processed: {}", self.last_order_read);
                 println!("  ⏱️  Current Tick: {}", self.tick);
                 println!("  📁 Session Directory: {}", self.session_dir.display());
                 println!();
-                
+
                 FIRST_RUN = false;
                 LAST_TICK = self.tick;
                 LAST_ORDERS = self.last_order_read;
@@ -1846,7 +1843,7 @@ impl SessionEngine {
 
 fn start_session(session_name: String, symbol: u32, tick_interval_ms: u64, display: String) {
     println!("{}", "🚀 Starting Whistle Session Engine".cyan().bold());
-    
+
     match SessionEngine::new(&session_name, symbol) {
         Ok(mut engine) => {
             if let Err(e) = engine.run(tick_interval_ms, &display) {
@@ -1864,7 +1861,7 @@ fn start_session(session_name: String, symbol: u32, tick_interval_ms: u64, displ
 
 fn list_sessions() {
     println!("{}", "📋 Available Sessions".cyan().bold());
-    
+
     let sessions_dir = std::env::temp_dir().join("whistle-exchange");
     if !sessions_dir.exists() {
         println!("No sessions directory found.");
@@ -1902,10 +1899,10 @@ fn list_sessions() {
 
 fn show_session_info(session_name: String) {
     println!("{}", format!("📊 Session Info: {}", session_name).cyan().bold());
-    
+
     let sessions_dir = std::env::temp_dir().join("whistle-exchange");
     let session_dir = sessions_dir.join(&session_name);
-    
+
     if !session_dir.exists() {
         eprintln!("{}", format!("❌ Session '{}' does not exist", session_name).red());
         return;
@@ -1915,19 +1912,20 @@ fn show_session_info(session_name: String) {
     let config_file = session_dir.join("config.json");
     if config_file.exists() {
         match std::fs::read_to_string(config_file) {
-            Ok(content) => {
-                match serde_json::from_str::<serde_json::Value>(&content) {
-                    Ok(config) => {
-                        println!("  📁 Directory: {}", session_dir.display());
-                        println!("  👥 Accounts: {}", config["accounts"].as_u64().unwrap_or(0));
-                        println!("  🕐 Created: {}", config["created"].as_u64().unwrap_or(0));
-                        println!("  🔄 Last Activity: {}", config["last_activity"].as_u64().unwrap_or(0));
-                    }
-                    Err(e) => {
-                        eprintln!("❌ Failed to parse session config: {}", e);
-                    }
+            Ok(content) => match serde_json::from_str::<serde_json::Value>(&content) {
+                Ok(config) => {
+                    println!("  📁 Directory: {}", session_dir.display());
+                    println!("  👥 Accounts: {}", config["accounts"].as_u64().unwrap_or(0));
+                    println!("  🕐 Created: {}", config["created"].as_u64().unwrap_or(0));
+                    println!(
+                        "  🔄 Last Activity: {}",
+                        config["last_activity"].as_u64().unwrap_or(0)
+                    );
                 }
-            }
+                Err(e) => {
+                    eprintln!("❌ Failed to parse session config: {}", e);
+                }
+            },
             Err(e) => {
                 eprintln!("❌ Failed to read session config: {}", e);
             }
@@ -1957,7 +1955,7 @@ fn show_session_info(session_name: String) {
 
 fn cleanup_sessions() {
     println!("{}", "🧹 Cleaning up expired sessions".cyan().bold());
-    
+
     let sessions_dir = std::env::temp_dir().join("whistle-exchange");
     if !sessions_dir.exists() {
         println!("No sessions directory found.");
@@ -1978,16 +1976,26 @@ fn cleanup_sessions() {
                             let config_file = path.join("config.json");
                             if config_file.exists() {
                                 if let Ok(content) = std::fs::read_to_string(config_file) {
-                                    if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
-                                        if let Some(last_activity) = config["last_activity"].as_u64() {
+                                    if let Ok(config) =
+                                        serde_json::from_str::<serde_json::Value>(&content)
+                                    {
+                                        if let Some(last_activity) =
+                                            config["last_activity"].as_u64()
+                                        {
                                             if now - last_activity > max_age {
                                                 match std::fs::remove_dir_all(&path) {
                                                     Ok(_) => {
-                                                        println!("  🗑️  Removed expired session: {}", name);
+                                                        println!(
+                                                            "  🗑️  Removed expired session: {}",
+                                                            name
+                                                        );
                                                         cleaned += 1;
                                                     }
                                                     Err(e) => {
-                                                        eprintln!("  ❌ Failed to remove session {}: {}", name, e);
+                                                        eprintln!(
+                                                            "  ❌ Failed to remove session {}: {}",
+                                                            name, e
+                                                        );
                                                     }
                                                 }
                                             }
@@ -1999,7 +2007,7 @@ fn cleanup_sessions() {
                     }
                 }
             }
-            
+
             if cleaned == 0 {
                 println!("No expired sessions found.");
             } else {
