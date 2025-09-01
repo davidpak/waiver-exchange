@@ -85,9 +85,71 @@ engine/whistle-bench     # Criterion benchmarks (no deps in hot path)
 exe/execution-manager    # downstream sink (placeholder)
 exe/simclock             # logical tick driver (placeholder)
 tools/replay             # replay checker (placeholder)
-tools/whistle-playground # interactive CLI for testing Whistle
+tools/whistle-playground # session-based CLI for testing Whistle
+tools/whistle-monitor    # real-time dashboard and session engine
 docs/adr                 # ADRs: determinism, rejects, event sequencing, etc.
 ```
+
+## 🚀 **Session-Based Trading System**
+
+The Waiver Exchange now includes a complete session-based trading system with multi-account support and real-time monitoring.
+
+### **Quick Start: Complete Trading Session**
+
+1. **Create a Trading Session**:
+   ```bash
+   cargo run --bin whistle-playground -- create-session my-trading --accounts 5
+   ```
+
+2. **Start the Real-time Monitor**:
+   ```bash
+   cargo run --bin whistle-monitor -- start-session my-trading --display dashboard
+   ```
+
+3. **Submit Orders as Different Accounts**:
+   ```bash
+   # Account 1: Market maker
+   cargo run --bin whistle-playground -- submit my-trading --account-id 1 --side buy --order-type limit --price 150 --qty 20
+   cargo run --bin whistle-playground -- submit my-trading --account-id 1 --side sell --order-type limit --price 155 --qty 20
+   
+   # Account 2: Takes liquidity
+   cargo run --bin whistle-playground -- submit my-trading --account-id 2 --side buy --order-type market --qty 5
+   
+   # Account 3: Places limit order
+   cargo run --bin whistle-playground -- submit my-trading --account-id 3 --side sell --order-type limit --price 160 --qty 10
+   ```
+
+4. **Watch Real-time Updates**: The dashboard shows live order book changes, trade executions, and session statistics.
+
+### **Key Features**
+
+- **🎯 Multi-Account Trading**: Switch between accounts and trade as different users
+- **📊 Real-time Dashboard**: Beautiful terminal UI with live order book updates
+- **🔄 Session Management**: Create, join, and manage trading sessions
+- **📈 Account Status**: View active orders, recent trades, and positions
+- **🎨 Color-coded Trades**: Green for buys, red for sells (like real exchanges)
+- **⚡ Smart Updates**: Dashboard only updates when there are actual changes
+
+### **System Architecture**
+
+```
+┌─────────────────┐    File-based    ┌─────────────────┐
+│   Playground    │ ◄──────────────► │  Session Engine │
+│   (Client)      │   Communication  │   (Monitor)     │
+└─────────────────┘                  └─────────────────┘
+        │                                      │
+        │ Writes orders to                     │ Reads orders from
+        │ orders.jsonl                         │ orders.jsonl
+        │                                      │
+        │ Reads responses from                 │ Writes responses to
+        │ responses.jsonl                      │ responses.jsonl
+```
+
+### **Documentation**
+
+- **[Whistle Playground](tools/whistle-playground/README.md)** - Session and account management
+- **[Whistle Monitor](tools/whistle-monitor/README.md)** - Real-time dashboard and monitoring
+- **[Whistle Engine](engine/whistle/README.md)** - Core matching engine
 
 ### Interactive Testing
 

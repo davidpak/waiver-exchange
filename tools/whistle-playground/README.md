@@ -1,157 +1,309 @@
 # Whistle Playground
 
-An interactive CLI tool for testing and exploring the Whistle matching engine in real-time.
+An interactive CLI tool for testing and exploring the Whistle matching engine with session-based multi-account trading.
 
-## Features
+## 🚀 **Overview**
 
-- **Interactive Mode**: Real-time testing with a live Whistle engine
-- **Demo Mode**: Quick demonstration of the engine's capabilities
-- **Order Submission**: Submit various order types (limit, market, IOC, post-only)
-- **Order Cancellation**: Cancel existing orders
-- **Tick Processing**: Manually advance ticks and see events
-- **Status Monitoring**: View engine state and queue statistics
-- **Colored Output**: Easy-to-read colored terminal output
+The Whistle Playground provides a complete trading environment where you can:
+- **Create and join trading sessions** with multiple accounts
+- **Switch between accounts** and trade as different users
+- **Submit orders** with automatic order ID generation
+- **View real-time account status** and trading history
+- **Monitor order book** and trade execution
 
-## Usage
+## 🎯 **Key Features**
 
-### Interactive Mode
+- **Session Management**: Create, join, and manage trading sessions
+- **Multi-Account Trading**: Switch between accounts and trade as different users
+- **Real-time Order Submission**: Submit orders with automatic ID generation
+- **Account Status Monitoring**: View active orders, recent trades, and positions
+- **File-based Communication**: Seamless integration with Whistle Monitor
+- **Beautiful Terminal UI**: Colored output and intuitive commands
 
-Start an interactive session with a Whistle engine:
+## 📋 **Quick Start**
 
+### 1. Create a Trading Session
 ```bash
-# Default configuration
-cargo run --bin whistle-playground interactive
-
-# Custom configuration
-cargo run --bin whistle-playground interactive \
-  --symbol 42 \
-  --price-floor 100 \
-  --price-ceil 200 \
-  --tick-size 5 \
-  --batch-max 1024 \
-  --arena-capacity 4096
+# Create a session with 5 accounts
+cargo run --bin whistle-playground -- create-session my-trading --accounts 5
 ```
 
-### Demo Mode
-
-Run a quick demonstration:
-
+### 2. Start the Monitor (in another terminal)
 ```bash
-cargo run --bin whistle-playground demo --symbol 42
+# Start the session engine with beautiful dashboard
+cargo run --bin whistle-monitor -- start-session my-trading --display dashboard
 ```
 
-## Interactive Commands
-
-Once in interactive mode, you can use these commands:
-
-### Basic Commands
-- `help`, `h` - Show available commands
-- `quit`, `q`, `exit` - Exit the playground
-- `status`, `s` - Show engine status
-- `tick`, `t` - Process next tick
-- `clear`, `c` - Clear the message queue
-- `demo`, `d` - Run quick demo
-
-### Order Management
-- `submit`, `sub` - Submit order (interactive prompts)
-- `cancel`, `can` - Cancel order (interactive prompt)
-
-### Quick Commands
-- `submit buy limit 150 10` - Buy 10 @ 150
-- `submit sell market 5` - Sell 5 @ market
-- `cancel 123` - Cancel order 123
-
-## Examples
-
-### Interactive Session
-
-```
-🚀 Whistle Playground - Interactive Mode
-Symbol: 42, Price Range: 100-200, Tick: 5, Batch: 1024, Arena: 4096
-Type 'help' for available commands
-
-whistle> submit buy limit 150 10
-📝 Submit Order
-Side (buy/sell): buy
-Order type (limit/market/ioc/postonly): limit
-Price: 150
-Quantity: 10
-OK ✓ Order submitted successfully
-
-whistle> tick
-🔄 Processing tick...
-  Generated 2 events:
-    1. Lifecycle(EvLifecycle { symbol: 42, tick: 100, kind: Accepted, order_id: 123456789, reason: None })
-    2. TickComplete(EvTickComplete { symbol: 42, tick: 100 })
-
-whistle> status
-📊 Engine Status
-  Tick: 101
-  Queue: 0/1024 messages
-  Symbol: 42
-  Price Domain: 100-200 (tick: 5)
-```
-
-### Demo Output
-
-```
-🎬 Whistle Playground - Demo Mode
-Running quick demo with symbol 42
-
-📝 Running demo sequence...
-  Buy Limit 150@10
-    OK ✓ Enqueued
-  Sell Limit 160@5
-    OK ✓ Enqueued
-  Buy Market 20
-    OK ✓ Enqueued
-  Cancel Order 2
-    OK ✓ Enqueued
-
-🔄 Processing tick...
-  Generated 4 events:
-    1. Lifecycle(EvLifecycle { symbol: 42, tick: 100, kind: Accepted, order_id: 1, reason: None })
-    2. Lifecycle(EvLifecycle { symbol: 42, tick: 100, kind: Accepted, order_id: 2, reason: None })
-    3. Lifecycle(EvLifecycle { symbol: 42, tick: 100, kind: Accepted, order_id: 3, reason: None })
-    4. TickComplete(EvTickComplete { symbol: 42, tick: 100 })
-
-📊 Engine Status
-  Tick: 101
-  Queue: 0/1024 messages
-  Symbol: 42
-  Price Domain: 100-200 (tick: 5)
-```
-
-## Development
-
-This tool is perfect for:
-
-- **Testing new features** before implementing them in the main engine
-- **Debugging** order processing logic
-- **Demonstrating** the engine's capabilities
-- **Learning** how the matching engine works
-- **Performance testing** with different configurations
-
-## Building
-
+### 3. Submit Orders
 ```bash
-# Build the tool
+# Submit as account 1
+cargo run --bin whistle-playground -- submit my-trading --account-id 1 --side buy --order-type limit --price 150 --qty 10
+
+# Submit as account 2
+cargo run --bin whistle-playground -- submit my-trading --account-id 2 --side sell --order-type limit --price 155 --qty 5
+```
+
+## 🛠️ **Commands Reference**
+
+### Session Management
+
+#### Create Session
+```bash
+cargo run --bin whistle-playground -- create-session <NAME> --accounts <N>
+```
+Creates a new trading session with N accounts.
+
+**Example:**
+```bash
+cargo run --bin whistle-playground -- create-session test-trading --accounts 5
+# Output: Session 'test-trading' created with 5 accounts.
+```
+
+#### List Sessions
+```bash
+cargo run --bin whistle-playground -- list-sessions
+```
+Shows all available trading sessions.
+
+#### Session Info
+```bash
+cargo run --bin whistle-playground -- session-info <SESSION_NAME>
+```
+Displays detailed information about a session.
+
+#### Join Session
+```bash
+cargo run --bin whistle-playground -- join-session <NAME> --account-id <ID> --account-type <TYPE>
+```
+Joins an existing session as a specific account.
+
+**Example:**
+```bash
+cargo run --bin whistle-playground -- join-session test-trading --account-id 1 --account-type trader
+```
+
+### Account Management
+
+#### Switch Account
+```bash
+cargo run --bin whistle-playground -- switch-account <SESSION> <ACCOUNT_ID>
+```
+Switch to a different account in a session.
+
+**Example:**
+```bash
+cargo run --bin whistle-playground -- switch-account test-trading 2
+# Output: Switched to account 2 in session 'test-trading'
+```
+
+#### Account Status
+```bash
+cargo run --bin whistle-playground -- account-status <SESSION> --account-id <ID>
+```
+View detailed account status including recent trades and order book.
+
+**Example:**
+```bash
+cargo run --bin whistle-playground -- account-status test-trading --account-id 2
+```
+
+**Output:**
+```
+📊 Account Status - Session: test-trading
+Account ID: 2
+
+Recent Trades:
+  🟢 BUY @ 155 (3 units)
+  🔴 SELL @ 160 (5 units)
+
+Current Order Book:
+  Sells (Asks):
+    🔴 @ 170 (15 units)
+    🔴 @ 165 (8 units)
+  Buys (Bids):
+    🟢 @ 160 (12 units)
+    🟢 @ 155 (20 units)
+```
+
+### Order Submission
+
+#### Submit Order
+```bash
+cargo run --bin whistle-playground -- submit <SESSION> --account-id <ID> --side <SIDE> --order-type <TYPE> --price <PRICE> --qty <QTY>
+```
+
+**Parameters:**
+- `SESSION`: Session name
+- `--account-id`: Account ID (default: 1)
+- `--side`: `buy` or `sell`
+- `--order-type`: `limit`, `market`, `ioc`, or `post-only`
+- `--price`: Price (required for limit orders)
+- `--qty`: Quantity
+- `--order-id`: Order ID (optional - auto-generated if not provided)
+
+**Examples:**
+```bash
+# Limit buy order
+cargo run --bin whistle-playground -- submit test-trading --account-id 1 --side buy --order-type limit --price 150 --qty 10
+
+# Market sell order
+cargo run --bin whistle-playground -- submit test-trading --account-id 2 --side sell --order-type market --qty 5
+
+# IOC order (Immediate or Cancel)
+cargo run --bin whistle-playground -- submit test-trading --account-id 3 --side buy --order-type ioc --price 155 --qty 8
+
+# Post-only order
+cargo run --bin whistle-playground -- submit test-trading --account-id 1 --side sell --order-type post-only --price 160 --qty 12
+```
+
+## 🔄 **Integration with Whistle Monitor**
+
+The playground works seamlessly with the Whistle Monitor for real-time trading:
+
+### Complete Trading Workflow
+
+1. **Create Session** (Playground):
+   ```bash
+   cargo run --bin whistle-playground -- create-session my-trading --accounts 5
+   ```
+
+2. **Start Monitor** (Monitor):
+   ```bash
+   cargo run --bin whistle-monitor -- start-session my-trading --display dashboard
+   ```
+
+3. **Submit Orders** (Playground):
+   ```bash
+   # Account 1 buys
+   cargo run --bin whistle-playground -- submit my-trading --account-id 1 --side buy --order-type limit --price 150 --qty 10
+   
+   # Account 2 sells
+   cargo run --bin whistle-playground -- submit my-trading --account-id 2 --side sell --order-type limit --price 155 --qty 5
+   
+   # Account 3 market order (triggers trade)
+   cargo run --bin whistle-playground -- submit my-trading --account-id 3 --side buy --order-type market --qty 3
+   ```
+
+4. **Watch Real-time Updates** (Monitor Dashboard):
+   - See orders appear in the order book
+   - Watch trades execute in real-time
+   - Monitor last trade prices with color coding
+
+## 📊 **Account Status Features**
+
+The account status command provides comprehensive information:
+
+### Recent Trades
+- Shows last 5 trades with color coding (🟢 for buys, 🔴 for sells)
+- Displays price, quantity, and side for each trade
+
+### Current Order Book
+- Real-time order book data from the session
+- Shows sells (asks) and buys (bids) with quantities
+- Sorted by price (ascending for sells, descending for buys)
+
+### Account Information
+- Account ID and session details
+- Active orders and positions (coming soon)
+
+## 🎨 **Order Types Explained**
+
+### Limit Orders
+- **Purpose**: Place orders at specific prices
+- **Execution**: Only execute when market reaches the specified price
+- **Example**: `--order-type limit --price 150 --qty 10`
+
+### Market Orders
+- **Purpose**: Execute immediately at best available price
+- **Execution**: Execute against existing orders in the book
+- **Example**: `--order-type market --qty 5`
+
+### IOC Orders (Immediate or Cancel)
+- **Purpose**: Execute immediately or cancel remaining quantity
+- **Execution**: Execute what's possible, cancel the rest
+- **Example**: `--order-type ioc --price 155 --qty 8`
+
+### Post-Only Orders
+- **Purpose**: Add liquidity without taking liquidity
+- **Execution**: Only accepted if they don't cross existing orders
+- **Example**: `--order-type post-only --price 160 --qty 12`
+
+## 🔧 **Advanced Usage**
+
+### Multi-Account Trading Scenarios
+
+#### Scenario 1: Market Making
+```bash
+# Account 1: Market maker (provides liquidity)
+cargo run --bin whistle-playground -- submit test-trading --account-id 1 --side buy --order-type limit --price 150 --qty 20
+cargo run --bin whistle-playground -- submit test-trading --account-id 1 --side sell --order-type limit --price 155 --qty 20
+
+# Account 2: Takes liquidity
+cargo run --bin whistle-playground -- submit test-trading --account-id 2 --side buy --order-type market --qty 5
+```
+
+#### Scenario 2: Price Discovery
+```bash
+# Multiple accounts place orders at different prices
+cargo run --bin whistle-playground -- submit test-trading --account-id 1 --side buy --order-type limit --price 145 --qty 10
+cargo run --bin whistle-playground -- submit test-trading --account-id 2 --side buy --order-type limit --price 150 --qty 15
+cargo run --bin whistle-playground -- submit test-trading --account-id 3 --side sell --order-type limit --price 155 --qty 12
+cargo run --bin whistle-playground -- submit test-trading --account-id 4 --side sell --order-type limit --price 160 --qty 8
+```
+
+### Session Management
+
+#### Cleanup Sessions
+```bash
+cargo run --bin whistle-playground -- cleanup-sessions
+```
+Removes expired sessions and cleans up temporary files.
+
+## 🚨 **Error Handling**
+
+The playground provides clear error messages for common issues:
+
+- **Session not found**: Create the session first
+- **Invalid order parameters**: Check price, quantity, and order type
+- **Account not in session**: Join the session with the specified account
+- **Price validation**: Ensure price is within valid range and tick-aligned
+
+## 🔮 **Future Enhancements**
+
+- **Interactive Trading Mode**: Real-time account dashboard
+- **Position Tracking**: P&L and position management per account
+- **Order History**: Complete order lifecycle tracking
+- **Risk Management**: Position limits and exposure controls
+- **Web Interface**: Browser-based trading interface
+
+## 🛠️ **Development**
+
+### Building
+```bash
+# Build the playground
 cargo build --bin whistle-playground
 
 # Run directly
-./target/debug/whistle-playground interactive
+./target/debug/whistle-playground --help
 
 # Or with cargo
-cargo run --bin whistle-playground interactive
+cargo run --bin whistle-playground -- --help
 ```
 
-## Configuration
+### Testing
+```bash
+# Test session creation
+cargo run --bin whistle-playground -- create-session test --accounts 3
 
-The playground uses the same `EngineCfg` as the main Whistle engine, so you can test with different:
+# Test order submission
+cargo run --bin whistle-playground -- submit test --side buy --order-type limit --price 150 --qty 10
 
-- **Price domains** (floor, ceiling, tick size)
-- **Queue capacities** (batch max)
-- **Arena sizes** (arena capacity)
-- **Symbol IDs** for multi-symbol testing
+# Test account switching
+cargo run --bin whistle-playground -- switch-account test 2
+```
 
-This makes it easy to test edge cases and performance characteristics.
+## 📚 **Related Documentation**
+
+- [Whistle Monitor README](../whistle-monitor/README.md) - Real-time dashboard and monitoring
+- [Whistle Engine Documentation](../../engine/whistle/README.md) - Core matching engine
+- [Session System Documentation](./src/session/README.md) - Session management internals

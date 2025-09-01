@@ -3,7 +3,8 @@ use colored::*;
 use std::collections::HashMap;
 use std::time::{Duration, Instant};
 use whistle::{
-    EngineCfg, EngineEvent, InboundMsg, OrderType, PriceDomain, SelfMatchPolicy, Side, Whistle,
+    BandMode, Bands, EngineCfg, EngineEvent, ExecIdMode, InboundMsg, OrderType, PriceDomain,
+    ReferencePriceSource, SelfMatchPolicy, Side, Whistle,
 };
 
 #[derive(Parser)]
@@ -109,6 +110,38 @@ enum Commands {
         #[arg(short, long, default_value = "1")]
         symbol: u32,
     },
+
+    /// Start a session engine (runs Whistle + drives ticks)
+    StartSession {
+        /// Session name
+        #[arg(required = true)]
+        session_name: String,
+
+        /// Symbol ID
+        #[arg(short, long, default_value = "1")]
+        symbol: u32,
+
+        /// Tick interval in milliseconds
+        #[arg(short, long, default_value = "1000")]
+        tick_interval_ms: u64,
+
+        /// Display mode (minimal, full, dashboard)
+        #[arg(short, long, default_value = "dashboard")]
+        display: String,
+    },
+
+    /// List available sessions
+    ListSessions,
+
+    /// Show session information
+    SessionInfo {
+        /// Session name
+        #[arg(required = true)]
+        session_name: String,
+    },
+
+    /// Clean up expired sessions
+    CleanupSessions,
 }
 
 #[derive(Debug, Clone)]
@@ -332,6 +365,23 @@ fn main() {
         }
         Commands::TestMultipleLevelMatching { symbol } => {
             test_multiple_level_matching(symbol);
+        }
+        Commands::StartSession {
+            session_name,
+            symbol,
+            tick_interval_ms,
+            display,
+        } => {
+            start_session(session_name, symbol, tick_interval_ms, display);
+        }
+        Commands::ListSessions => {
+            list_sessions();
+        }
+        Commands::SessionInfo { session_name } => {
+            show_session_info(session_name);
+        }
+        Commands::CleanupSessions => {
+            cleanup_sessions();
         }
     }
 }
@@ -1365,4 +1415,599 @@ fn test_multiple_level_matching(symbol: u32) {
     println!();
     println!("{}", "✅ Multiple Level Matching Test Complete!".green().bold());
     println!("  Check the results above to verify correct behavior.");
+}
+
+// Session engine types
+pub struct SessionEngine {
+    session_name: String,
+    engine: Whistle,
+    tick: u64,
+    session_dir: std::path::PathBuf,
+    last_order_read: u64,
+    last_response_write: u64,
+    last_trade_price: Option<u32>,
+    last_trade_qty: Option<u32>,
+    last_trade_side: Option<Side>,
+}
+
+impl SessionEngine {
+    pub fn new(session_name: &str, symbol: u32) -> Result<Self, String> {
+        let sessions_dir = std::env::temp_dir().join("whistle-exchange");
+        let session_dir = sessions_dir.join(session_name);
+        
+        if !session_dir.exists() {
+            return Err(format!("Session '{}' does not exist. Create it first with playground.", session_name));
+        }
+
+        let cfg = EngineCfg {
+            symbol,
+            price_domain: PriceDomain { floor: 100, ceil: 200, tick: 1 }, // Changed from 5 to 1 for more flexible pricing
+            bands: Bands { mode: BandMode::Percent(1000) },
+            batch_max: 1024,
+            arena_capacity: 4096,
+            elastic_arena: false,
+            exec_shift_bits: 12,
+            exec_id_mode: ExecIdMode::Sharded,
+            self_match_policy: SelfMatchPolicy::Skip,
+            allow_market_cold_start: false,
+            reference_price_source: ReferencePriceSource::SnapshotLastTrade,
+        };
+
+        let engine = Whistle::new(cfg);
+
+        Ok(Self {
+            session_name: session_name.to_string(),
+            engine,
+            tick: 100,
+            session_dir,
+            last_order_read: 0,
+            last_response_write: 0,
+            last_trade_price: None,
+            last_trade_qty: None,
+            last_trade_side: None,
+        })
+    }
+
+    pub fn run(&mut self, tick_interval_ms: u64, display_mode: &str) -> Result<(), String> {
+        println!("🚀 Starting session engine for '{}'", self.session_name);
+        println!("📁 Session directory: {}", self.session_dir.display());
+        println!("⏱️  Tick interval: {}ms", tick_interval_ms);
+        println!("📊 Display mode: {}", display_mode);
+        println!("Press Ctrl+C to stop");
+        println!();
+
+        let tick_duration = Duration::from_millis(tick_interval_ms);
+        let mut last_tick = Instant::now();
+        let mut last_display_update = Instant::now();
+        let mut last_order_count = 0;
+        let mut last_tick_count = self.tick;
+
+        // Initial display
+        if display_mode == "dashboard" {
+            self.update_dashboard_in_place();
+        }
+
+        loop {
+            let now = Instant::now();
+
+            // Process incoming orders from playground clients
+            let orders_processed = self.process_incoming_orders()?;
+
+            // Process tick if interval elapsed
+            let tick_processed = if now.duration_since(last_tick) >= tick_duration {
+                self.process_tick()?;
+                last_tick = now;
+                true
+            } else {
+                false
+            };
+
+            // Only update display if there are changes or every 5 seconds
+            let should_update = display_mode != "minimal" && (
+                orders_processed > last_order_count || 
+                tick_processed || 
+                self.tick != last_tick_count ||
+                now.duration_since(last_display_update) >= Duration::from_secs(5)
+            );
+
+            if should_update {
+                if display_mode == "dashboard" {
+                    self.update_dashboard_in_place();
+                } else {
+                    self.update_display();
+                }
+                last_display_update = now;
+                last_order_count = orders_processed;
+                last_tick_count = self.tick;
+            }
+
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+
+    fn process_incoming_orders(&mut self) -> Result<u64, String> {
+        let orders_file = self.session_dir.join("orders.jsonl");
+        if !orders_file.exists() {
+            return Ok(0);
+        }
+
+        let content = std::fs::read_to_string(&orders_file)
+            .map_err(|e| format!("Failed to read orders file: {}", e))?;
+
+        let lines: Vec<&str> = content.lines().collect();
+        let mut orders_processed = 0;
+        
+        // Process only new orders (after last_order_read)
+        for (_line_num, line) in lines.iter().enumerate().skip(self.last_order_read as usize) {
+            if line.trim().is_empty() {
+                continue;
+            }
+
+            let order_data: serde_json::Value = serde_json::from_str(line)
+                .map_err(|e| format!("Failed to parse order JSON: {}", e))?;
+
+            // Convert to InboundMsg and submit to engine
+            if let Some(msg) = self.parse_order_to_message(&order_data)? {
+                self.engine.enqueue_message(msg)
+                    .map_err(|e| format!("Failed to enqueue order: {:?}", e))?;
+                orders_processed += 1;
+            }
+        }
+
+        self.last_order_read = lines.len() as u64;
+        Ok(orders_processed)
+    }
+
+    fn parse_order_to_message(&self, order_data: &serde_json::Value) -> Result<Option<InboundMsg>, String> {
+        let account_id = order_data["account_id"].as_u64()
+            .ok_or("Missing account_id")?;
+        let order_id = order_data["order_id"].as_u64()
+            .ok_or("Missing order_id")?;
+        let side_str = order_data["side"].as_str()
+            .ok_or("Missing side")?;
+        let order_type_str = order_data["order_type"].as_str()
+            .ok_or("Missing order_type")?;
+        let qty = order_data["qty"].as_u64()
+            .ok_or("Missing qty")?;
+        let timestamp = order_data["timestamp"].as_u64()
+            .unwrap_or(self.tick * 1000 + order_id);
+
+        let side = match side_str {
+            "buy" => Side::Buy,
+            "sell" => Side::Sell,
+            _ => return Err(format!("Invalid side: {}", side_str)),
+        };
+
+        let order_type = match order_type_str {
+            "limit" => OrderType::Limit,
+            "market" => OrderType::Market,
+            "ioc" => OrderType::Ioc,
+            "post_only" => OrderType::PostOnly,
+            _ => return Err(format!("Invalid order type: {}", order_type_str)),
+        };
+
+        let price = order_data["price"].as_u64().map(|p| p as u32);
+
+        let msg = InboundMsg::submit(
+            order_id,
+            account_id,
+            side,
+            order_type,
+            price,
+            qty as u32,
+            timestamp,
+            0, // flags
+            1, // symbol - hardcoded for now
+        );
+
+        Ok(Some(msg))
+    }
+
+    fn process_tick(&mut self) -> Result<(), String> {
+        let events = self.engine.tick(self.tick);
+        self.tick += 1;
+
+        // Write events to session files
+        self.write_events_to_files(&events)?;
+
+        // Display events
+        self.display_tick_events(&events);
+
+        Ok(())
+    }
+
+    fn write_events_to_files(&mut self, events: &[EngineEvent]) -> Result<(), String> {
+        for event in events {
+            match event {
+                EngineEvent::Trade(trade) => {
+                    // Update last trade information
+                    self.last_trade_price = Some(trade.price);
+                    self.last_trade_qty = Some(trade.qty);
+                    self.last_trade_side = Some(trade.taker_side);
+                    self.write_trade_event(trade)?;
+                }
+                EngineEvent::Lifecycle(lifecycle) => {
+                    self.write_lifecycle_event(lifecycle)?;
+                }
+                EngineEvent::BookDelta(delta) => {
+                    self.write_book_delta_event(delta)?;
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
+    fn write_trade_event(&self, trade: &whistle::EvTrade) -> Result<(), String> {
+        let trade_file = self.session_dir.join("trades.jsonl");
+        let trade_data = serde_json::json!({
+            "price": trade.price,
+            "qty": trade.qty,
+            "maker_order": trade.maker_order,
+            "taker_order": trade.taker_order,
+            "taker_side": if trade.taker_side == Side::Buy { "buy" } else { "sell" },
+            "exec_id": trade.exec_id,
+            "tick": self.tick - 1,
+            "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+        });
+
+        self.append_to_file(&trade_file, &trade_data)
+    }
+
+    fn write_lifecycle_event(&self, lifecycle: &whistle::EvLifecycle) -> Result<(), String> {
+        let response_file = self.session_dir.join("responses.jsonl");
+        let response_data = serde_json::json!({
+            "account_id": 1, // TODO: get from order lookup
+            "order_id": lifecycle.order_id,
+            "status": match lifecycle.kind {
+                whistle::LifecycleKind::Accepted => "accepted",
+                whistle::LifecycleKind::Rejected => "rejected",
+                whistle::LifecycleKind::Cancelled => "cancelled",
+            },
+            "reason": lifecycle.reason.as_ref().map(|r| format!("{:?}", r)),
+            "tick": self.tick - 1,
+            "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+        });
+
+        self.append_to_file(&response_file, &response_data)
+    }
+
+    fn write_book_delta_event(&self, delta: &whistle::EvBookDelta) -> Result<(), String> {
+        let book_file = self.session_dir.join("book_updates.jsonl");
+        let book_data = serde_json::json!({
+            "side": if delta.side == Side::Buy { "buy" } else { "sell" },
+            "price": delta.price,
+            "qty": delta.level_qty_after,
+            "tick": self.tick - 1,
+            "timestamp": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs(),
+        });
+
+        self.append_to_file(&book_file, &book_data)
+    }
+
+    fn append_to_file(&self, file_path: &std::path::Path, data: &serde_json::Value) -> Result<(), String> {
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(file_path)
+            .map_err(|e| format!("Failed to open file: {}", e))?;
+
+        use std::io::Write;
+        writeln!(file, "{}", data.to_string())
+            .map_err(|e| format!("Failed to write to file: {}", e))?;
+
+        Ok(())
+    }
+
+    fn display_tick_events(&self, events: &[EngineEvent]) {
+        if events.is_empty() {
+            return;
+        }
+
+        println!("🔄 Tick {}: {} events", self.tick - 1, events.len());
+        
+        for event in events {
+            match event {
+                EngineEvent::Trade(trade) => {
+                    println!("  💰 Trade: {} @ {} (maker: {}, taker: {})", 
+                        trade.qty, trade.price, trade.maker_order, trade.taker_order);
+                }
+                EngineEvent::Lifecycle(lifecycle) => {
+                    let status = match lifecycle.kind {
+                        whistle::LifecycleKind::Accepted => "ACCEPTED".green(),
+                        whistle::LifecycleKind::Rejected => "REJECTED".red(),
+                        whistle::LifecycleKind::Cancelled => "CANCELLED".yellow(),
+                    };
+                    println!("  🔄 Order {}: {}", lifecycle.order_id, status);
+                }
+                EngineEvent::BookDelta(delta) => {
+                    println!("  📚 Book: {} @ {} (qty: {})", 
+                        if delta.side == Side::Buy { "BUY" } else { "SELL" },
+                        delta.price, delta.level_qty_after);
+                }
+                _ => {}
+            }
+        }
+        println!();
+    }
+
+    fn update_display(&self) {
+        // Clear screen and show current state
+        print!("\x1B[2J\x1B[1;1H");
+        println!("🎯 WHISTLE SESSION ENGINE - {}", self.session_name.cyan().bold());
+        println!("🕐 Tick: {} | Symbol: 1", self.tick);
+        println!("📁 Session: {}", self.session_dir.display());
+        println!();
+
+        // Show order book with beautiful formatting
+        self.display_session_order_book();
+    }
+
+    fn display_session_order_book(&self) {
+        println!("📈 Symbol 1");
+        println!("  📚 Order Book:");
+
+        // Get full order book data from the engine
+        let asks = self.engine.get_order_book_levels(Side::Sell); // Sell orders (asks)
+        let bids = self.engine.get_order_book_levels(Side::Buy); // Buy orders (bids)
+
+        // Display top 10 asks (sells) - highest price first
+        println!("    {} (Top 10 Sells)", "Price | Amount | Total".dimmed());
+        for (price, qty) in asks.iter().rev().take(10) {
+            // rev() to show highest first
+            let total = price * qty;
+            println!("    {} | {} | {}", price.to_string().red(), qty, total);
+        }
+        if asks.is_empty() {
+            println!("    {}", "No sell orders".dimmed());
+        }
+
+        // Display last trade price in the middle
+        match (self.last_trade_price, self.last_trade_qty, self.last_trade_side) {
+            (Some(price), Some(qty), Some(side)) => {
+                let colored_price = match side {
+                    Side::Buy => price.to_string().green(),  // Green for buy (taker bought)
+                    Side::Sell => price.to_string().red(),   // Red for sell (taker sold)
+                };
+                println!("    {} @ {} ({} units)", "Last Trade:".bold(), colored_price, qty);
+            }
+            _ => {
+                println!("    {} @ {}", "Last Trade:".bold(), "None".dimmed());
+            }
+        }
+
+        // Display top 10 bids (buys) - highest price first
+        println!("    {} (Top 10 Buys)", "Price | Amount | Total".dimmed());
+        for (price, qty) in bids.iter().take(10) {
+            // already sorted highest first
+            let total = price * qty;
+            println!("    {} | {} | {}", price.to_string().green(), qty, total);
+        }
+        if bids.is_empty() {
+            println!("    {}", "No buy orders".dimmed());
+        }
+
+        println!();
+    }
+
+    fn update_dashboard_display(&self) {
+        // Clear screen and show current state
+        print!("\x1B[2J\x1B[1;1H");
+        println!("🎯 WHISTLE SESSION ENGINE - {}", self.session_name.cyan().bold());
+        println!("🕐 Tick: {} | Symbol: 1", self.tick);
+        println!("📁 Session: {}", self.session_dir.display());
+        println!();
+
+        // Show the beautiful order book display
+        self.display_session_order_book();
+
+        // Show recent activity summary
+        println!("📊 Session Status:");
+        println!("  🔄 Orders Processed: {}", self.last_order_read);
+        println!("  ⏱️  Current Tick: {}", self.tick);
+        println!("  📁 Session Directory: {}", self.session_dir.display());
+        println!();
+    }
+
+    fn update_dashboard_in_place(&mut self) {
+        static mut FIRST_RUN: bool = true;
+        static mut LAST_TICK: u64 = 0;
+        static mut LAST_ORDERS: u64 = 0;
+        
+        unsafe {
+            let tick_changed = self.tick != LAST_TICK;
+            let orders_changed = self.last_order_read != LAST_ORDERS;
+            
+            if FIRST_RUN || tick_changed || orders_changed {
+                // Clear screen and redraw
+                print!("\x1B[2J\x1B[1;1H"); // Clear screen
+                println!("🎯 WHISTLE SESSION ENGINE - {}", self.session_name.cyan().bold());
+                println!("🕐 Tick: {} | Symbol: 1", self.tick);
+                println!("📁 Session: {}", self.session_dir.display());
+                println!();
+                
+                // Show the beautiful order book display
+                self.display_session_order_book();
+                
+                // Show recent activity summary
+                println!("📊 Session Status:");
+                println!("  🔄 Orders Processed: {}", self.last_order_read);
+                println!("  ⏱️  Current Tick: {}", self.tick);
+                println!("  📁 Session Directory: {}", self.session_dir.display());
+                println!();
+                
+                FIRST_RUN = false;
+                LAST_TICK = self.tick;
+                LAST_ORDERS = self.last_order_read;
+            }
+        }
+    }
+}
+
+fn start_session(session_name: String, symbol: u32, tick_interval_ms: u64, display: String) {
+    println!("{}", "🚀 Starting Whistle Session Engine".cyan().bold());
+    
+    match SessionEngine::new(&session_name, symbol) {
+        Ok(mut engine) => {
+            if let Err(e) = engine.run(tick_interval_ms, &display) {
+                eprintln!("{}", format!("❌ Session engine error: {}", e).red());
+                std::process::exit(1);
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", format!("❌ Failed to start session engine: {}", e).red());
+            eprintln!("💡 Create the session first with: cargo run --bin whistle-playground -- create-session {}", session_name);
+            std::process::exit(1);
+        }
+    }
+}
+
+fn list_sessions() {
+    println!("{}", "📋 Available Sessions".cyan().bold());
+    
+    let sessions_dir = std::env::temp_dir().join("whistle-exchange");
+    if !sessions_dir.exists() {
+        println!("No sessions directory found.");
+        return;
+    }
+
+    match std::fs::read_dir(sessions_dir) {
+        Ok(entries) => {
+            let mut sessions = Vec::new();
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                            sessions.push(name.to_string());
+                        }
+                    }
+                }
+            }
+
+            if sessions.is_empty() {
+                println!("No sessions found.");
+                println!("💡 Create a session with: cargo run --bin whistle-playground -- create-session <name>");
+            } else {
+                for session in sessions {
+                    println!("  📁 {}", session);
+                }
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", format!("❌ Failed to read sessions directory: {}", e).red());
+        }
+    }
+}
+
+fn show_session_info(session_name: String) {
+    println!("{}", format!("📊 Session Info: {}", session_name).cyan().bold());
+    
+    let sessions_dir = std::env::temp_dir().join("whistle-exchange");
+    let session_dir = sessions_dir.join(&session_name);
+    
+    if !session_dir.exists() {
+        eprintln!("{}", format!("❌ Session '{}' does not exist", session_name).red());
+        return;
+    }
+
+    // Try to read session config
+    let config_file = session_dir.join("config.json");
+    if config_file.exists() {
+        match std::fs::read_to_string(config_file) {
+            Ok(content) => {
+                match serde_json::from_str::<serde_json::Value>(&content) {
+                    Ok(config) => {
+                        println!("  📁 Directory: {}", session_dir.display());
+                        println!("  👥 Accounts: {}", config["accounts"].as_u64().unwrap_or(0));
+                        println!("  🕐 Created: {}", config["created"].as_u64().unwrap_or(0));
+                        println!("  🔄 Last Activity: {}", config["last_activity"].as_u64().unwrap_or(0));
+                    }
+                    Err(e) => {
+                        eprintln!("❌ Failed to parse session config: {}", e);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("❌ Failed to read session config: {}", e);
+            }
+        }
+    }
+
+    // Show session files
+    println!("\n📄 Session Files:");
+    let files = ["orders.jsonl", "responses.jsonl", "trades.jsonl", "book_updates.jsonl"];
+    for file in files {
+        let file_path = session_dir.join(file);
+        if file_path.exists() {
+            match std::fs::metadata(&file_path) {
+                Ok(metadata) => {
+                    let size = metadata.len();
+                    println!("  📄 {} ({} bytes)", file, size);
+                }
+                Err(_) => {
+                    println!("  📄 {} (error reading)", file);
+                }
+            }
+        } else {
+            println!("  📄 {} (not found)", file);
+        }
+    }
+}
+
+fn cleanup_sessions() {
+    println!("{}", "🧹 Cleaning up expired sessions".cyan().bold());
+    
+    let sessions_dir = std::env::temp_dir().join("whistle-exchange");
+    if !sessions_dir.exists() {
+        println!("No sessions directory found.");
+        return;
+    }
+
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+    let max_age = 24 * 60 * 60; // 24 hours
+
+    match std::fs::read_dir(sessions_dir) {
+        Ok(entries) => {
+            let mut cleaned = 0;
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if path.is_dir() {
+                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                            let config_file = path.join("config.json");
+                            if config_file.exists() {
+                                if let Ok(content) = std::fs::read_to_string(config_file) {
+                                    if let Ok(config) = serde_json::from_str::<serde_json::Value>(&content) {
+                                        if let Some(last_activity) = config["last_activity"].as_u64() {
+                                            if now - last_activity > max_age {
+                                                match std::fs::remove_dir_all(&path) {
+                                                    Ok(_) => {
+                                                        println!("  🗑️  Removed expired session: {}", name);
+                                                        cleaned += 1;
+                                                    }
+                                                    Err(e) => {
+                                                        eprintln!("  ❌ Failed to remove session {}: {}", name, e);
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            
+            if cleaned == 0 {
+                println!("No expired sessions found.");
+            } else {
+                println!("Cleaned up {} expired sessions.", cleaned);
+            }
+        }
+        Err(e) => {
+            eprintln!("{}", format!("❌ Failed to read sessions directory: {}", e).red());
+        }
+    }
 }

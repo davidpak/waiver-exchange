@@ -106,9 +106,9 @@ pub enum Commands {
         #[arg(short, long, default_value = "1")]
         account_id: u32,
 
-        /// Order ID
+        /// Order ID (optional - will be auto-generated if not provided)
         #[arg(long)]
-        order_id: u64,
+        order_id: Option<u64>,
 
         /// Side (buy/sell)
         #[arg(short, long)]
@@ -125,6 +125,39 @@ pub enum Commands {
         /// Quantity
         #[arg(short, long)]
         qty: u32,
+    },
+
+    /// Switch to a different account in a session
+    SwitchAccount {
+        /// Session name
+        #[arg(required = true)]
+        session: String,
+
+        /// Account ID to switch to
+        #[arg(required = true)]
+        account_id: u32,
+    },
+
+    /// Show account status (active orders, positions, etc.)
+    AccountStatus {
+        /// Session name
+        #[arg(required = true)]
+        session: String,
+
+        /// Account ID (optional - uses current account if not specified)
+        #[arg(short, long)]
+        account_id: Option<u32>,
+    },
+
+    /// Interactive account trading mode
+    AccountTrading {
+        /// Session name
+        #[arg(required = true)]
+        session: String,
+
+        /// Initial account ID
+        #[arg(short, long, default_value = "1")]
+        account_id: u32,
     },
 
     /// Demo commands
@@ -201,6 +234,18 @@ pub fn handle_commands(cli: Cli) {
 
         Commands::Submit { session, account_id, order_id, side, order_type, price, qty } => {
             submit_order(&session, account_id, order_id, &side, &order_type, price, qty);
+        }
+
+        Commands::SwitchAccount { session, account_id } => {
+            switch_account(&session, account_id);
+        }
+
+        Commands::AccountStatus { session, account_id } => {
+            show_account_status(&session, account_id);
+        }
+
+        Commands::AccountTrading { session, account_id } => {
+            run_account_trading(&session, account_id);
         }
 
         // Demo commands
@@ -540,7 +585,7 @@ fn join_session(name: &str, account_id: u32, account_type: &str) {
 fn submit_order(
     session: &str,
     account_id: u32,
-    order_id: u64,
+    order_id: Option<u64>,
     side: &str,
     order_type: &str,
     price: Option<u32>,
@@ -569,15 +614,24 @@ fn submit_order(
         }
     };
 
+    // Generate order ID if not provided
+    let final_order_id = order_id.unwrap_or_else(|| {
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        timestamp * 1000 + account_id as u64
+    });
+
     let session_manager = SessionManager::new();
 
     match session_manager
-        .submit_order_to_session(session, account_id, order_id, side, order_type, price, qty)
+        .submit_order_to_session(session, account_id, final_order_id, side, order_type, price, qty)
     {
         Ok(_) => {
             println!(
                 "{}",
-                format!("Order {} submitted to session '{}'", order_id, session).green()
+                format!("Order {} submitted to session '{}'", final_order_id, session).green()
             );
         }
         Err(e) => {
@@ -603,4 +657,153 @@ fn format_timestamp(timestamp: u64) -> String {
     let datetime = SystemTime::UNIX_EPOCH + Duration::from_secs(timestamp);
     let datetime: chrono::DateTime<chrono::Utc> = datetime.into();
     datetime.format("%Y-%m-%d %H:%M:%S UTC").to_string()
+}
+
+// Account management functions
+fn switch_account(session: &str, account_id: u32) {
+    // For now, just print the switch - in a real implementation, this would store state
+    println!("{}", format!("Switched to account {} in session '{}'", account_id, session).green());
+    println!("💡 Use 'account-status' to see account details");
+    println!("💡 Use 'account-trading' to enter interactive trading mode");
+}
+
+fn show_account_status(session: &str, account_id: Option<u32>) {
+    let current_account = account_id.unwrap_or(1); // Default to account 1 for now
+    
+    println!("{}", format!("📊 Account Status - Session: {}", session).cyan().bold());
+    println!("Account ID: {}", current_account);
+    println!();
+    
+    // Read from session files to show actual account data
+    let sessions_dir = std::env::temp_dir().join("whistle-exchange");
+    let session_dir = sessions_dir.join(session);
+    
+    // Show recent trades for this account
+    println!("{}", "Recent Trades:".yellow());
+    let trades_file = session_dir.join("trades.jsonl");
+    if trades_file.exists() {
+        if let Ok(content) = std::fs::read_to_string(&trades_file) {
+            let mut account_trades = Vec::new();
+            for line in content.lines() {
+                if let Ok(trade_data) = serde_json::from_str::<serde_json::Value>(line) {
+                    // For now, show all trades since we don't have account ownership tracking yet
+                    if let (Some(price), Some(qty), Some(taker_side)) = (
+                        trade_data["price"].as_u64(),
+                        trade_data["qty"].as_u64(),
+                        trade_data["taker_side"].as_str()
+                    ) {
+                        account_trades.push((price, qty, taker_side.to_string()));
+                    }
+                }
+            }
+            
+            if account_trades.is_empty() {
+                println!("  No recent trades found");
+            } else {
+                // Show most recent trades first (reverse order)
+                for (price, qty, side) in account_trades.iter().rev().take(5) {
+                    let side_emoji = if side == "buy" { "🟢" } else { "🔴" };
+                    println!("  {} {} @ {} ({} units)", side_emoji, side.to_uppercase(), price, qty);
+                }
+            }
+        }
+    } else {
+        println!("  No recent trades found");
+    }
+    println!();
+    
+    // Show current order book state (aggregated from all updates)
+    println!("{}", "Current Order Book:".yellow());
+    let book_file = session_dir.join("book_updates.jsonl");
+    if book_file.exists() {
+        if let Ok(content) = std::fs::read_to_string(&book_file) {
+            // Use a HashMap to aggregate quantities by price level
+            use std::collections::HashMap;
+            let mut sell_levels: HashMap<u64, u64> = HashMap::new();
+            let mut buy_levels: HashMap<u64, u64> = HashMap::new();
+            
+            for line in content.lines() {
+                if let Ok(book_data) = serde_json::from_str::<serde_json::Value>(line) {
+                    if let (Some(side), Some(price), Some(qty)) = (
+                        book_data["side"].as_str(),
+                        book_data["price"].as_u64(),
+                        book_data["qty"].as_u64()
+                    ) {
+                        match side {
+                            "sell" => {
+                                if qty > 0 {
+                                    sell_levels.insert(price, qty);
+                                } else {
+                                    sell_levels.remove(&price);
+                                }
+                            },
+                            "buy" => {
+                                if qty > 0 {
+                                    buy_levels.insert(price, qty);
+                                } else {
+                                    buy_levels.remove(&price);
+                                }
+                            },
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            
+            // Convert to vectors and sort
+            let mut sells: Vec<(u64, u64)> = sell_levels.into_iter().collect();
+            let mut buys: Vec<(u64, u64)> = buy_levels.into_iter().collect();
+            
+            sells.sort_by(|a, b| a.0.cmp(&b.0)); // ascending for sells
+            buys.sort_by(|a, b| b.0.cmp(&a.0));  // descending for buys
+            
+            println!("  Sells (Asks):");
+            for (price, qty) in sells.iter().take(5) {
+                println!("    {} @ {} ({} units)", "🔴", price, qty);
+            }
+            if sells.is_empty() {
+                println!("    No sell orders");
+            }
+            
+            println!("  Buys (Bids):");
+            for (price, qty) in buys.iter().take(5) {
+                println!("    {} @ {} ({} units)", "🟢", price, qty);
+            }
+            if buys.is_empty() {
+                println!("    No buy orders");
+            }
+        }
+    } else {
+        println!("  No order book data available");
+    }
+    println!();
+    
+    // Show session statistics
+    println!("{}", "Session Info:".yellow());
+    println!("  📁 Session Directory: {}", session_dir.display());
+    println!("  📄 Trades File: {} bytes", 
+        if trades_file.exists() { 
+            std::fs::metadata(&trades_file).map(|m| m.len()).unwrap_or(0) 
+        } else { 0 });
+    println!("  📄 Book File: {} bytes", 
+        if book_file.exists() { 
+            std::fs::metadata(&book_file).map(|m| m.len()).unwrap_or(0) 
+        } else { 0 });
+    println!();
+    
+    println!("💡 Use 'submit' to place orders");
+    println!("💡 Use 'switch-account' to change accounts");
+    println!("💡 Use 'account-status' to refresh this view");
+}
+
+fn run_account_trading(session: &str, account_id: u32) {
+    println!("{}", format!("🚀 Account Trading Mode - Session: {}", session).cyan().bold());
+    println!("Account: {}", account_id);
+    println!("Type 'help' for available commands");
+    println!("Type 'quit' to exit");
+    println!();
+    
+    // TODO: Implement interactive account trading loop
+    println!("💡 Interactive account trading coming soon!");
+    println!("💡 For now, use 'submit' command to place orders");
 }
