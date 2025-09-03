@@ -2,10 +2,9 @@ mod cli;
 mod engine;
 mod session;
 
-use clap::Parser;
-use cli::commands::{handle_commands, Cli};
+use cli::interactive::InteractiveCLI;
 
 fn main() {
-    let cli = Cli::parse();
-    handle_commands(cli);
+    let mut cli = InteractiveCLI::new();
+    cli.run();
 }

@@ -1,4 +1,4 @@
-use crate::session::config::{AccountType, ParticipantInfo, SessionConfig};
+use crate::session::config::{AccountType, ParticipantInfo, SessionConfig, SymbolInfo};
 use serde_json::json;
 use std::collections::HashMap;
 use std::fs;
@@ -17,7 +17,7 @@ impl SessionManager {
         Self { sessions_dir }
     }
 
-    pub fn create_session(&self, name: &str, accounts: u32) -> Result<SessionConfig, String> {
+    pub fn create_session(&self, name: &str, accounts: u32, symbols: u32) -> Result<SessionConfig, String> {
         let session_dir = self.sessions_dir.join(name);
 
         if session_dir.exists() {
@@ -48,18 +48,40 @@ impl SessionManager {
                 .insert(i, ParticipantInfo { name, account_type, connected: false, last_seen: 0 });
         }
 
+        let mut symbols_info = HashMap::new();
+        let fantasy_players = vec![
+            (1, "Jamarr Chase", "WR"),
+            (2, "Derrick Henry", "RB"),
+            (3, "Patrick Mahomes", "QB"),
+            (4, "Travis Kelce", "TE"),
+            (5, "Christian McCaffrey", "RB"),
+            (6, "Tyreek Hill", "WR"),
+            (7, "Josh Allen", "QB"),
+            (8, "Saquon Barkley", "RB"),
+        ];
+
+        for (symbol_id, player_name, position) in fantasy_players.iter().take(symbols as usize) {
+            symbols_info.insert(*symbol_id, SymbolInfo::new(*symbol_id, player_name, position));
+        }
+
         let config = SessionConfig {
             name: name.to_string(),
             accounts,
+            symbols,
             created: now,
             last_activity: now,
             participants,
+            symbols_info,
         };
 
         self.save_session_config(&config)?;
         self.create_session_files(name)?;
 
         Ok(config)
+    }
+
+    pub fn create_session_legacy(&self, name: &str, accounts: u32) -> Result<SessionConfig, String> {
+        self.create_session(name, accounts, 1)
     }
 
     pub fn join_session(&self, name: &str, account: u32) -> Result<SessionConfig, String> {
@@ -174,6 +196,20 @@ impl SessionManager {
         price: Option<u32>,
         qty: u32,
     ) -> Result<(), String> {
+        self.submit_order_to_session_with_symbol(session_name, account_id, 1, order_id, side, order_type, price, qty)
+    }
+
+    pub fn submit_order_to_session_with_symbol(
+        &self,
+        session_name: &str,
+        account_id: u32,
+        symbol_id: u32,
+        order_id: u64,
+        side: Side,
+        order_type: OrderType,
+        price: Option<u32>,
+        qty: u32,
+    ) -> Result<(), String> {
         let session_dir = self.sessions_dir.join(session_name);
         if !session_dir.exists() {
             return Err(format!("Session '{}' does not exist", session_name));
@@ -182,6 +218,7 @@ impl SessionManager {
         let order_file = session_dir.join("orders.jsonl");
         let order_data = json!({
             "account_id": account_id,
+            "symbol_id": symbol_id,
             "order_id": order_id,
             "side": if side == Side::Buy { "buy" } else { "sell" },
             "order_type": match order_type {
@@ -217,7 +254,7 @@ impl SessionManager {
         Ok(())
     }
 
-    fn load_session_config(&self, name: &str) -> Result<SessionConfig, String> {
+    pub fn load_session_config(&self, name: &str) -> Result<SessionConfig, String> {
         let config_file = self.sessions_dir.join(name).join("config.json");
         let content = fs::read_to_string(config_file)
             .map_err(|e| format!("Failed to read session config: {}", e))?;

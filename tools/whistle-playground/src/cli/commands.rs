@@ -9,7 +9,9 @@ use whistle::{
 
 use crate::engine::demos::*;
 use crate::engine::playground::run_interactive;
-use crate::session::SessionManager;
+use crate::session::{SessionManager, SessionEngine};
+use std::thread;
+
 
 #[derive(Parser)]
 #[command(name = "whistle-playground")]
@@ -79,6 +81,10 @@ pub enum Commands {
         /// Number of accounts
         #[arg(short, long, default_value = "5")]
         accounts: u32,
+
+        /// Number of symbols (fantasy football players)
+        #[arg(short, long, default_value = "8")]
+        symbols: u32,
     },
 
     /// Join an existing session
@@ -105,6 +111,10 @@ pub enum Commands {
         /// Account ID
         #[arg(short, long, default_value = "1")]
         account_id: u32,
+
+        /// Symbol ID (fantasy football player)
+        #[arg(long, default_value = "1")]
+        symbol_id: u32,
 
         /// Order ID (optional - will be auto-generated if not provided)
         #[arg(long)]
@@ -147,6 +157,20 @@ pub enum Commands {
         /// Account ID (optional - uses current account if not specified)
         #[arg(short, long)]
         account_id: Option<u32>,
+    },
+
+    /// List available symbols in a session
+    ListSymbols {
+        /// Session name
+        #[arg(required = true)]
+        session: String,
+    },
+
+    /// Start the SessionEngine with SymbolCoordinator integration
+    StartEngine {
+        /// Session name
+        #[arg(required = true)]
+        session: String,
     },
 
     /// Interactive account trading mode
@@ -224,16 +248,24 @@ pub fn handle_commands(cli: Cli) {
             cleanup_sessions();
         }
 
-        Commands::CreateSession { name, accounts } => {
-            create_session(&name, accounts);
+        Commands::CreateSession { name, accounts, symbols } => {
+            create_session(&name, accounts, symbols);
         }
 
         Commands::JoinSession { name, account_id, account_type } => {
             join_session(&name, account_id, &account_type);
         }
 
-        Commands::Submit { session, account_id, order_id, side, order_type, price, qty } => {
-            submit_order(&session, account_id, order_id, &side, &order_type, price, qty);
+        Commands::Submit { session, account_id, symbol_id, order_id, side, order_type, price, qty } => {
+            submit_order(&session, account_id, symbol_id, order_id, &side, &order_type, price, qty);
+        }
+
+        Commands::ListSymbols { session } => {
+            list_symbols(&session);
+        }
+
+        Commands::StartEngine { session } => {
+            start_session_engine(&session);
         }
 
         Commands::SwitchAccount { session, account_id } => {
@@ -276,7 +308,7 @@ fn run_session_interactive(
     // Ensure session exists
     if !session_manager.session_exists(&session_name) {
         println!("{}", "Session does not exist. Creating new session...".yellow());
-        session_manager.create_session(&session_name, 5).unwrap();
+        session_manager.create_session(&session_name, 5, 1).unwrap();
     }
 
     // Join session
@@ -549,10 +581,10 @@ fn cleanup_sessions() {
     }
 }
 
-fn create_session(name: &str, accounts: u32) {
+fn create_session(name: &str, accounts: u32, symbols: u32) {
     let session_manager = SessionManager::new();
 
-    match session_manager.create_session(name, accounts) {
+    match session_manager.create_session(name, accounts, symbols) {
         Ok(_) => {
             println!(
                 "{}",
@@ -585,6 +617,7 @@ fn join_session(name: &str, account_id: u32, account_type: &str) {
 fn submit_order(
     session: &str,
     account_id: u32,
+    symbol_id: u32,
     order_id: Option<u64>,
     side: &str,
     order_type: &str,
@@ -622,9 +655,10 @@ fn submit_order(
 
     let session_manager = SessionManager::new();
 
-    match session_manager.submit_order_to_session(
+    match session_manager.submit_order_to_session_with_symbol(
         session,
         account_id,
+        symbol_id,
         final_order_id,
         side,
         order_type,
@@ -639,6 +673,73 @@ fn submit_order(
         }
         Err(e) => {
             println!("{}", format!("Failed to submit order: {}", e).red());
+        }
+    }
+}
+
+fn list_symbols(session: &str) {
+    let session_manager = SessionManager::new();
+    
+    match session_manager.load_session_config(session) {
+        Ok(config) => {
+            println!("{}", format!("📊 Symbols in Session: {}", session).cyan().bold());
+            println!("Total Symbols: {}", config.symbols);
+            println!();
+            
+            for (symbol_id, symbol_info) in &config.symbols_info {
+                let status = if symbol_info.active { "🟢 Active" } else { "⚪ Inactive" };
+                println!("  {} - {} ({}) - {}", symbol_id, symbol_info.name, symbol_info.position, status);
+            }
+        }
+        Err(e) => {
+            println!("{}", format!("Failed to load session config: {}", e).red());
+        }
+    }
+}
+
+fn start_session_engine(session: &str) {
+    let session_manager = SessionManager::new();
+    
+    match session_manager.load_session_config(session) {
+        Ok(config) => {
+            println!("🚀 Starting SessionEngine for '{}'", session);
+            println!("📊 Symbols: {}, Accounts: {}", config.symbols, config.accounts);
+            
+            // Create session directory path
+            let sessions_dir = std::env::temp_dir().join("whistle-exchange");
+            let session_dir = sessions_dir.join(session);
+            
+            // Create and start SessionEngine
+            let mut engine = SessionEngine::new(session.to_string(), session_dir, config);
+            
+            match engine.start() {
+                Ok(_) => {
+                    println!("✅ SessionEngine started successfully!");
+                    println!("🎯 Processing orders in real-time with SymbolCoordinator...");
+                    println!("💡 Use 'list-symbols {}' to see active symbols", session);
+                    println!("💡 Submit more orders to see real-time processing");
+                    
+                    // Keep the engine running
+                    loop {
+                        thread::sleep(Duration::from_secs(5));
+                        
+                        if !engine.is_running() {
+                            println!("❌ SessionEngine stopped unexpectedly");
+                            break;
+                        }
+                        
+                        let tick = engine.get_current_tick();
+                        let active_symbols = engine.get_active_symbols().unwrap_or_default();
+                        println!("🔄 Tick: {}, Active Symbols: {}", tick, active_symbols.len());
+                    }
+                }
+                Err(e) => {
+                    println!("{}", format!("Failed to start SessionEngine: {}", e).red());
+                }
+            }
+        }
+        Err(e) => {
+            println!("{}", format!("Failed to load session config: {}", e).red());
         }
     }
 }

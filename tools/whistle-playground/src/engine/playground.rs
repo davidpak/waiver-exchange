@@ -31,7 +31,7 @@ pub fn run_interactive(
                 std::process::exit(1);
             });
         } else {
-            session_manager.create_session(&name, num_accounts).unwrap_or_else(|e| {
+            session_manager.create_session(&name, num_accounts, 1).unwrap_or_else(|e| {
                 eprintln!("{}", e.red());
                 std::process::exit(1);
             });
@@ -394,7 +394,7 @@ fn manage_sessions(session_manager: &mut SessionManager) {
                 io::stdin().read_line(&mut accounts_str).unwrap();
                 let accounts: u32 = accounts_str.trim().parse().unwrap_or(5);
 
-                match session_manager.create_session(&name, accounts) {
+                match session_manager.create_session(&name, accounts, 1) {
                     Ok(_) => println!("{}", "Session '{}' created successfully!".green()),
                     Err(e) => println!("{}", e.red()),
                 }
