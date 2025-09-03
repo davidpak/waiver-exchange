@@ -7,14 +7,17 @@ mod queue;
 mod registry;
 mod types;
 
-pub use coordinator::SymbolCoordinator;
-pub use types::{
-    CoordError, CoordinatorConfig, EngineMetadata, OrderQueueWriter, ReadyAtTick, SymbolId,
-    SymbolState, ThreadId, WhistleHandle,
-};
+#[cfg(test)]
+mod integration_test;
 
-// Re-export the trait that OrderRouter expects
-pub use order_router::SymbolCoordinatorApi;
+pub use coordinator::SymbolCoordinator;
+pub use types::{CoordError, CoordinatorConfig, ReadyAtTick};
+
+// Define the trait locally for OrderRouter compatibility
+pub trait SymbolCoordinatorApi {
+    fn ensure_active(&self, symbol_id: u32) -> Result<ReadyAtTick, CoordError>;
+    fn release_if_idle(&self, symbol_id: u32);
+}
 
 #[cfg(test)]
 mod tests {
@@ -53,6 +56,20 @@ mod tests {
 
         let ready_at_tick = result.unwrap();
         assert_eq!(ready_at_tick.next_tick, 0);
+    }
+
+    #[test]
+    fn test_symbol_activation() {
+        let config = CoordinatorConfig::default();
+        let coordinator = SymbolCoordinator::new(config);
+
+        // Test symbol activation
+        let result = coordinator.ensure_active(1);
+        assert!(result.is_ok());
+
+        // Test that activating the same symbol again succeeds
+        let result2 = coordinator.ensure_active(1);
+        assert!(result2.is_ok());
     }
 
     #[test]

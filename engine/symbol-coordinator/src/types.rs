@@ -1,5 +1,5 @@
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use whistle::TickId;
 
 /// Symbol identifier (matches order-router)
@@ -22,6 +22,7 @@ pub enum SymbolState {
 #[derive(Debug, Clone)]
 pub struct ReadyAtTick {
     pub next_tick: TickId,
+    pub queue_writer: OrderQueueWriter,
 }
 
 /// Error types from SymbolCoordinator
@@ -31,6 +32,9 @@ pub enum CoordError {
     Faulted,
     Unknown,
 }
+
+/// Re-export for compatibility with order-router
+pub type OrderRouterCoordError = CoordError;
 
 /// Engine metadata for tracking
 #[derive(Debug, Clone)]
@@ -42,11 +46,13 @@ pub struct EngineMetadata {
 }
 
 /// Handle for Whistle engine operations
-#[derive(Debug)]
+/// Stores the actual Whistle instance for SimulationClock to access
+/// NO LOCKS ON HOT PATH - SimulationClock needs direct access to call tick()
 pub struct WhistleHandle {
     pub order_tx: OrderQueueWriter,
     pub metadata: EngineMetadata,
     pub tick_flag: AtomicBool,
+    pub engine: whistle::Whistle, // Direct access for SimulationClock - no locks
 }
 
 /// Write handle for OrderRouter to enqueue orders

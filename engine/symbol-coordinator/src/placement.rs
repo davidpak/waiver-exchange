@@ -95,7 +95,7 @@ impl EngineThreadPool {
         self.symbols_per_thread
             .iter()
             .enumerate()
-            .min_by_key(|(_, &count)| count)
+            .min_by_key(|&(_, &count)| count)
             .map(|(thread_id, _)| thread_id as u32)
             .unwrap_or(0)
     }

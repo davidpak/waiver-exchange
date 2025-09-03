@@ -1,6 +1,5 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use order_router::SymbolCoordinatorApi;
-use symbol_coordinator::{CoordinatorConfig, SymbolCoordinator};
+use criterion::{Criterion, black_box, criterion_group, criterion_main};
+use symbol_coordinator::{CoordinatorConfig, SymbolCoordinator, SymbolCoordinatorApi};
 
 fn bench_coordinator_creation(c: &mut Criterion) {
     c.bench_function("coordinator_creation", |b| {

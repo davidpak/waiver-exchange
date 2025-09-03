@@ -3,7 +3,6 @@ use std::collections::HashMap;
 use whistle::TickId;
 
 /// Registry entry for a symbol
-#[derive(Debug)]
 pub struct SymbolEntry {
     pub symbol_id: SymbolId,
     pub state: SymbolState,
@@ -29,6 +28,19 @@ impl SymbolEntry {
             order_tx: crate::types::OrderQueueWriter::new(spsc_queue),
             metadata,
             tick_flag: std::sync::atomic::AtomicBool::new(false),
+            engine: whistle::Whistle::new(whistle::EngineCfg {
+                symbol: symbol_id,
+                price_domain: whistle::PriceDomain { floor: 100, ceil: 10000, tick: 1 },
+                bands: whistle::Bands { mode: whistle::BandMode::Percent(10) },
+                batch_max: 100,
+                arena_capacity: 1024,
+                elastic_arena: false,
+                exec_shift_bits: 16,
+                exec_id_mode: whistle::ExecIdMode::Sharded,
+                self_match_policy: whistle::SelfMatchPolicy::Skip,
+                allow_market_cold_start: false,
+                reference_price_source: whistle::ReferencePriceSource::MidpointOnWarm,
+            }),
         };
 
         Self { symbol_id, state: SymbolState::Registered, whistle_handle, thread_id }
@@ -52,7 +64,6 @@ impl SymbolEntry {
 }
 
 /// Registry for tracking all symbols
-#[derive(Debug)]
 pub struct SymbolRegistry {
     entries: HashMap<SymbolId, SymbolEntry>,
     current_tick: TickId,

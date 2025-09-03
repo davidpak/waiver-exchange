@@ -1,8 +1,8 @@
+use crate::SymbolCoordinatorApi;
 use crate::placement::{EngineThreadPool, PlacementPolicy, RoundRobinPolicy};
 use crate::queue::QueueAllocator;
 use crate::registry::SymbolRegistry;
-use crate::types::{CoordinatorConfig, SymbolId};
-use order_router::{CoordError as OrderRouterCoordError, ReadyAtTick, SymbolCoordinatorApi};
+use crate::types::{CoordError, CoordinatorConfig, ReadyAtTick, SymbolId};
 use std::sync::{Arc, Mutex};
 use whistle::TickId;
 use whistle::{
@@ -12,13 +12,11 @@ use whistle::{
 
 /// Main SymbolCoordinator implementation
 /// Uses interior mutability to allow mutation through immutable references
-#[derive(Debug)]
 pub struct SymbolCoordinator {
     inner: Arc<Mutex<SymbolCoordinatorInner>>,
 }
 
 /// Internal state that can be mutated
-#[derive(Debug)]
 struct SymbolCoordinatorInner {
     config: CoordinatorConfig,
     registry: SymbolRegistry,
@@ -80,11 +78,7 @@ impl SymbolCoordinator {
 
     /// Get the current tick
     pub fn current_tick(&self) -> TickId {
-        if let Ok(inner) = self.inner.lock() {
-            inner.current_tick
-        } else {
-            0
-        }
+        if let Ok(inner) = self.inner.lock() { inner.current_tick } else { 0 }
     }
 
     /// Get configuration
@@ -119,20 +113,59 @@ impl SymbolCoordinator {
 
     /// Get total registered symbols count
     pub fn total_symbols_count(&self) -> usize {
+        if let Ok(inner) = self.inner.lock() { inner.registry.len() } else { 0 }
+    }
+
+    /// Get all active symbol IDs
+    pub fn get_active_symbols(&self) -> Vec<u32> {
         if let Ok(inner) = self.inner.lock() {
-            inner.registry.len()
+            inner.registry.get_active_symbols()
         } else {
-            0
+            Vec::new()
         }
+    }
+
+    /// Process a tick for a specific symbol
+    /// This is the main method for SessionEngine to use
+    pub fn process_symbol_tick(
+        &mut self,
+        symbol_id: u32,
+        tick: TickId,
+    ) -> Option<Vec<whistle::EngineEvent>> {
+        if let Ok(mut inner) = self.inner.lock() {
+            // Update current tick
+            inner.current_tick = tick;
+            inner.registry.update_tick(tick);
+
+            // Process the specific symbol
+            if let Some(entry) = inner.registry.get_entry_mut(symbol_id) {
+                if entry.state == crate::types::SymbolState::Active {
+                    // Call tick() on the Whistle engine
+                    let events = entry.whistle_handle.engine.tick(tick);
+                    return Some(events);
+                }
+            }
+        }
+
+        None
     }
 }
 
 impl SymbolCoordinatorApi for SymbolCoordinator {
-    fn ensure_active(&self, symbol_id: u32) -> Result<ReadyAtTick, OrderRouterCoordError> {
+    fn ensure_active(&self, symbol_id: u32) -> Result<ReadyAtTick, CoordError> {
         if let Ok(mut inner) = self.inner.lock() {
             // Check if symbol is already active
             if inner.registry.is_symbol_active(symbol_id) {
-                return Ok(ReadyAtTick { next_tick: inner.current_tick });
+                return Ok(ReadyAtTick {
+                    next_tick: inner.current_tick,
+                    queue_writer: inner
+                        .registry
+                        .get_entry(symbol_id)
+                        .ok_or(CoordError::Unknown)?
+                        .whistle_handle
+                        .order_tx
+                        .clone(),
+                });
             }
 
             // Symbol is not active, activate it now
@@ -151,23 +184,26 @@ impl SymbolCoordinatorApi for SymbolCoordinator {
             inner
                 .registry
                 .register_symbol(symbol_id, thread_id, spsc_queue)
-                .map_err(|_| OrderRouterCoordError::Unknown)?;
+                .map_err(|_| CoordError::Unknown)?;
 
             // Assign to thread pool
-            inner
-                .thread_pool
-                .assign_symbol(thread_id)
-                .map_err(|_| OrderRouterCoordError::Unknown)?;
+            inner.thread_pool.assign_symbol(thread_id).map_err(|_| CoordError::Unknown)?;
 
             // Activate the symbol
-            inner
-                .registry
-                .activate_symbol(symbol_id)
-                .map_err(|_| OrderRouterCoordError::Unknown)?;
+            inner.registry.activate_symbol(symbol_id).map_err(|_| CoordError::Unknown)?;
 
-            Ok(ReadyAtTick { next_tick: inner.current_tick })
+            // Get the queue writer for OrderRouter
+            let queue_writer = inner
+                .registry
+                .get_entry(symbol_id)
+                .ok_or(CoordError::Unknown)?
+                .whistle_handle
+                .order_tx
+                .clone();
+
+            Ok(ReadyAtTick { next_tick: inner.current_tick, queue_writer })
         } else {
-            Err(OrderRouterCoordError::Unknown)
+            Err(CoordError::Unknown)
         }
     }
 
