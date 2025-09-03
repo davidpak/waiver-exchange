@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use whistle::TickId;
 
 /// Message with symbol ID for routing
@@ -11,6 +12,14 @@ pub struct InboundMsgWithSymbol {
 #[derive(Debug, Clone)]
 pub struct ReadyAtTick {
     pub next_tick: TickId,
+    pub queue_writer: OrderQueueWriter,
+}
+
+/// Write handle for OrderRouter to enqueue orders
+/// This provides access to the InboundQueue from SymbolCoordinator
+#[derive(Debug, Clone)]
+pub struct OrderQueueWriter {
+    pub queue: Arc<whistle::InboundQueue>,
 }
 
 /// Error types from SymbolCoordinator
@@ -22,7 +31,7 @@ pub enum CoordError {
 }
 
 /// Trait that SymbolCoordinator must implement for OrderRouter integration
-pub trait SymbolCoordinatorApi {
+pub trait SymbolCoordinatorApi: Send {
     fn ensure_active(&self, symbol_id: u32) -> Result<ReadyAtTick, CoordError>;
     fn release_if_idle(&self, symbol_id: u32);
 }

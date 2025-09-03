@@ -5,9 +5,14 @@ mod router;
 mod sharding;
 mod types;
 
+#[cfg(test)]
+mod integration_test;
+
 pub use router::{OrderRouter, RouterConfig, RouterError};
 pub use sharding::{ShardId, SymbolShard};
-pub use types::{CoordError, InboundMsgWithSymbol, ReadyAtTick, SymbolCoordinatorApi};
+pub use types::{
+    CoordError, InboundMsgWithSymbol, OrderQueueWriter, ReadyAtTick, SymbolCoordinatorApi,
+};
 
 // Re-export whistle types for convenience
 pub use whistle::{

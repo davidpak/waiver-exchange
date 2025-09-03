@@ -7,4 +7,5 @@ members = [
     "engine/symbol-coordinator",
     "tools/whistle-playground",
     "tools/whistle-monitor",
+    "tools/symbol-coordinator-demo",
 ]

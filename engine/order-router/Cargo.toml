@@ -6,6 +6,7 @@ license = "Apache-2.0 OR MIT"
 
 [dependencies]
 whistle = { path = "../whistle" }
+symbol-coordinator = { path = "../symbol-coordinator" }
 siphasher = "1.0"
 crossbeam-queue = "0.3"
 

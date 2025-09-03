@@ -764,6 +764,7 @@ dependencies = [
  "criterion",
  "crossbeam-queue",
  "siphasher",
+ "symbol-coordinator",
  "whistle",
 ]
 
@@ -1133,6 +1134,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "symbol-coordinator-demo"
+version = "0.1.0"
+dependencies = [
+ "order-router",
+ "symbol-coordinator",
+ "whistle",
+]
+
+[[package]]
 name = "syn"
 version = "2.0.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1331,6 +1341,7 @@ dependencies = [
 name = "whistle-monitor"
 version = "0.1.0"
 dependencies = [
+ "chrono",
  "clap",
  "colored",
  "crossterm",
@@ -1350,8 +1361,10 @@ dependencies = [
  "chrono",
  "clap",
  "colored",
+ "order-router",
  "serde",
  "serde_json",
+ "symbol-coordinator",
  "whistle",
 ]
 
