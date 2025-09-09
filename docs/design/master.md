@@ -68,7 +68,7 @@ At the core is `Whistle`, the per-symbol matching engine that executes trades us
 
 ## 2. High-Level Component Breakdown
 
-### Matching Core
+### 2.1 Matching Core
 
 | **Component** | **Description** | **Tech Stack** |
 | --- | --- | --- |
@@ -76,7 +76,7 @@ At the core is `Whistle`, the per-symbol matching engine that executes trades us
 | `OrderBook` | Bid/ask ladders with intrusive FIFO queues, bitset navigation, O(1) cancels | **Rust** (tight integration with `Whistle`) |
 | `SymbolCoordinator` | Owns engine lifecycle: spawn/evict, thread/NUMA placement, queue wiring | **Rust** (task runtime, resource control) |
 
-### 2. 1 Ingestion & Routing
+### 2.2 Ingestion & Routing
 
 | **Component** | **Description** | **Tech Stack** |
 | --- | --- | --- |
@@ -84,7 +84,7 @@ At the core is `Whistle`, the per-symbol matching engine that executes trades us
 | `OrderRouter` | Routes to per-symbol SPSC queue; stamps `enq_seq`; handles backpressure | **C++** (lightweight fan-in/out) *(Rust variant acceptable)* |
 | `LatencyModel` | Applies deterministic synthetic latency per account/strategy before enqueue | **Rust** (precision, fairness enforcement) |
 
-### 2.2 Post-Match & Observability
+### 2.3 Post-Match & Observability
 
 | **Component** | **Description** | **Tech Stack** |
 | --- | --- | --- |
@@ -94,14 +94,14 @@ At the core is `Whistle`, the per-symbol matching engine that executes trades us
 | `PersistenceLayer` | WAL segments, snapshots, and metrics storage | **Rust/C++** (Flatbuffers/Parquet/ClickHouse/RocksDB) |
 | `ReplayEngine` | Deterministic replayer: WAL → engine inputs; validates event/book hashes | **Rust** (snapshotting, file I/O) |
 
-### 2.3 Control & Simulation
+### 2.4 Control & Simulation
 
 | **Component** | **Description** | **Tech Stack** |
 | --- | --- | --- |
 | `SimulationClock` | Drives logical ticks; enforces per-tick work caps; orders symbol iteration | **Rust** (pure, testable) |
 | `AdminShell` | Operational CLI: start/stop symbols, load snapshots, inspect queues | **C++** *(or Rust for tighter integration)* |
 
-### 2.4 UI, Bots & External Data
+### 2.5 UI, Bots & External Data
 
 | **Component** | **Description** | **Tech Stack** |
 | --- | --- | --- |
@@ -114,7 +114,7 @@ At the core is `Whistle`, the per-symbol matching engine that executes trades us
 
 ---
 
-## 3.3 System Flow (High-Level)
+## 3. System Flow (High-Level)
 
 1. **Submit** — A user or bot submits an order (`LIMIT`, `MARKET`, `IOC`, `POST-ONLY`).
 2. **Ingress** — `OrderGateway` validates shape and forwards to `OrderRouter`.
@@ -160,7 +160,7 @@ At the core is `Whistle`, the per-symbol matching engine that executes trades us
 | `Whistle` → `ExecutionManager` | **MPSC queue** | Canonical per-tick event sequence (**Trades → BookDeltas → OrderLifecycle → TickComplete**). No drops allowed for Trades/BookDeltas. |
 | `ExecutionManager` → `ReplayEngine` / `AnalyticsEngine` / `WebUI` | Internal fan-out | WAL is lossless and ordering-stable; analytics/UI can be lossy by policy (never Trades/BookDeltas for replay). |
 
-## Supported Order Types
+### 4.1 Supported Order Types
 
 Each order type allows traders (human or bot) to define **intent -** whether they want to add liquidity, sweep it, or do so only if the market conditions are ideal.
 
@@ -175,11 +175,11 @@ Each order type allows traders (human or bot) to define **intent -** whether the
 
 This section defines **what gets emitted**, **in what order**, and **who stamps which fields**. It is the contract that keeps **Whistle** hot, **ExecutionManager** authoritative, and **Replay** byte-identical.
 
-### 3.1 Event families (exactly four)
+### 5.1 Event families (exactly four)
 
 1. **Trade** — a single maker/taker match at a specific price/qty.
     
-    Fields: `symbol`, `tick`, `taker_side`, `price_idx` (and/or `price_raw`), `qty`, `maker_order_id`, `taker_order_id`, `maker_acct`, `taker_acct`, `ts_norm` (aggressor), `seq_in_tick` (**Whistle** stamps), optional `exec_id` (see 2.2).
+    Fields: `symbol`, `tick`, `taker_side`, `price_idx` (and/or `price_raw`), `qty`, `maker_order_id`, `taker_order_id`, `maker_acct`, `taker_acct`, `ts_norm` (aggressor), `seq_in_tick` (**Whistle** stamps), optional `exec_id` (see 5.2).
     
 2. **BookDelta** — level totals after all updates for that level **within the tick**.
     
@@ -200,7 +200,7 @@ This section defines **what gets emitted**, **in what order**, and **who stamps 
 
 ---
 
-### 3.2 Stamping authority (who writes which fields)
+### 5.2 Stamping authority (who writes which fields)
 
 | Field | Stamped by | Rationale |
 | --- | --- | --- |
@@ -214,7 +214,7 @@ This section defines **what gets emitted**, **in what order**, and **who stamps 
 
 ---
 
-### 3.3 Canonical per-tick order (non-negotiable)
+### 5.3 Canonical per-tick order (non-negotiable)
 
 Within a single `tick()` per symbol, events **must** be emitted in this sequence:
 
@@ -229,11 +229,11 @@ Within a single `tick()` per symbol, events **must** be emitted in this sequence
 
 ---
 
-### 3.4 Sequencing & determinism
+### 5.4 Sequencing & determinism
 
 - `seq_in_tick` starts at **0** at tick entry.
 - Increment on every **Trade** and every **OrderLifecycle** emission **in the order those facts become true**.
-- `BookDelta` entries do **not** consume `seq_in_tick` (they’re coalesced summaries; see 2.5).
+- `BookDelta` entries do **not** consume `seq_in_tick` (they're coalesced summaries; see 5.5).
 - When two outcomes are possible in the same tick (e.g., **cancel vs. fill race**), the tie breaks by the engine’s priority key:
     
     `(ts_norm, enq_seq)` — **earlier wins deterministically**.
@@ -243,7 +243,7 @@ Within a single `tick()` per symbol, events **must** be emitted in this sequence
 
 ---
 
-### 3.5 Coalescing rules for BookDeltas
+### 5.5 Coalescing rules for BookDeltas
 
 - Track touched levels in a tiny per-tick map keyed by `(side, price_idx)`.
 - Store the **final post-tick** `new_total_qty`.
@@ -255,7 +255,7 @@ Within a single `tick()` per symbol, events **must** be emitted in this sequence
 
 ---
 
-### 3.6 Delivery semantics & backpressure
+### 5.6 Delivery semantics & backpressure
 
 - Whistle enqueues events to ExecutionManager via a **bounded MPSC** **without blocking**.
 - On push failure:
@@ -266,7 +266,7 @@ Within a single `tick()` per symbol, events **must** be emitted in this sequence
 
 ---
 
-### 3.7 Schema & versioning notes
+### 5.7 Schema & versioning notes
 
 - Every event carries a **schema version** in the envelope.
 - Breaking changes require an ADR and bump; ExecMgr must be able to **route/upgrade** or **reject** mixed versions.
@@ -276,7 +276,7 @@ Within a single `tick()` per symbol, events **must** be emitted in this sequence
 
 ---
 
-### 3.8 Invariants & validation (cheap to assert)
+### 5.8 Invariants & validation (cheap to assert)
 
 - Exactly **one** `TickComplete` per symbol per tick.
 - No `Trade` without corresponding qty updates in book state.
@@ -291,7 +291,7 @@ Optional cheap hashes:
 
 ---
 
-### 3.9 Tiny example (one symbol, one tick)
+### 5.9 Tiny example (one symbol, one tick)
 
 1. Aggressor BUY LIMIT crosses two resting SELL orders at `p=120`:
     - Emit `Trade(seq=0, maker=O1, taker=A, qty=5)`
@@ -307,7 +307,7 @@ Optional cheap hashes:
 
 ---
 
-### 3.10 “Done when” (acceptance for this section)
+### 5.10 "Done when" (acceptance for this section)
 
 - Unit tests assert the **exact** family order and `seq_in_tick` monotonicity.
 - Property tests cover cancel/fill races (earlier `(ts_norm, enq_seq)` always wins).
@@ -382,61 +382,61 @@ Accepted orders are immediately matched if crossing; otherwise they rest.
 - Backpressure behavior is test-covered: SPSC full ⇒ reject; ExecMgr overflow ⇒ symbol marks fatal, evicted at boundary.
 - Cold-start behavior is enforced by tests: `MARKET/IOC` reject; first `LIMIT` trade establishes reference price.
 
-## Matching & Book Updates (Master-Level)
+## 7. Matching & Book Updates (Master-Level)
 
 `Whistle` executes matching **only inside `tick(T)`**, using **strict price-time priority** and FIFO per price level. The loop is allocation-free and bounded by config (`batch_max`), updating the book and emitting events deterministically.
 
-### Priority model
+### 7.1 Priority model
 
 - **Price first, then time.** Better price wins; ties break by `(ts_norm, enq_seq)` captured at admission.
 - **FIFO within level.** Resting orders at the same price are served in arrival order; partials **retain** their original place.
 
-### Order-type semantics
+### 7.2 Order-type semantics
 
 - **LIMIT:** Match while crossing; any remainder **rests** at its price (tail of the FIFO).
 - **MARKET:** Match best prices until filled or book exhausted; **never rests**.
 - **IOC:** Match immediately up to its limit; **cancel** any remainder.
 - **POST-ONLY:** Must add liquidity at its submit price; if it would cross, it’s **rejected at admission** (no slide/price improvement).
 
-### Self-match prevention (SMP)
+### 7.3 Self-match prevention (SMP)
 
 - Default policy: **skip** own resting orders when aggressing (no auto-cancel, no self-fill).
 - Alternative policies (configurable per symbol): **cancel resting** or **cancel aggressor**.
 - Behavior is deterministic and recorded in events for replay.
 
-### Book maintenance (what changes)
+### 7.4 Book maintenance (what changes)
 
 - **Level totals**: Updated after each fill/partial; coalesced for emission later in the tick.
 - **Intrusive FIFO links**: Fully filled makers are unlinked in O(1); partials stay in place.
 - **Top-of-book pointers**: `best_bid`/`best_ask` updated when a level becomes empty/non-empty.
 - **Non-empty index**: Maintained to jump to the next price efficiently (no full scans).
 
-### Cancels & races
+### 7.5 Cancels & races
 
 - Cancels are part of the same `tick(T)` batch. If a cancel and a potential fill compete:
     - Earlier `(ts_norm, enq_seq)` **wins**.
     - Outcome is stable in replay and reflected in lifecycle events.
 
-### Determinism & replay stance
+### 7.6 Determinism & replay stance
 
 - Matching order and outcomes depend **only** on: admitted order payloads, book state at `tick` entry, and fixed policies.
 - Emitted events are buffered and later ordered **canonically** within the tick (Trades → BookDeltas → OrderLifecycle → TickComplete).
 - Replaying the same inputs yields byte-identical event streams (pre global execution IDs).
 
-### Interfaces touched
+### 7.7 Interfaces touched
 
 - **Reads/Writes:** `OrderBook` (levels, best pointers), arena entries (qty, links).
 - **Outbound:** Trade records and coalesced book deltas staged for `ExecutionManager`.
 - **Indexing:** OrderId→handle map updated on fills/cancels for O(1) maintenance.
 
-### Observability & safety
+### 7.8 Observability & safety
 
 - Counters for matches, partials, depth traversed, SMP skips, and book-churn per tick.
 - No hot-path logging or allocation; diagnostics are buffered and emitted off the match loop.
 
 ---
 
-## ExecutionManager & Event Pipeline
+## 8. ExecutionManager & Event Pipeline
 
 `ExecutionManager` is the **single intake** for all per-symbol events emitted by `Whistle`. It stamps (or validates) execution IDs, preserves the **canonical per-tick ordering**, and fans out to **Replay**, **Analytics**, and **UI** without perturbing engine latency or determinism.
 
@@ -534,7 +534,7 @@ Two supported modes:
 
 ---
 
-## AccountService
+## 9. AccountService
 
 `AccountService` is the **source of truth** for balances, positions, and limits. It enables **deterministic admission** (read-only risk checks on the hot path) and **authoritative settlement** (applying fills to cash/positions). It never blocks `Whistle`; it operates on **snapshotted, tick-consistent state** and reconciles changes at tick boundaries.
 
@@ -644,7 +644,7 @@ Two supported modes:
 
 ---
 
-## Persistence & Replay (WAL + Snapshots)
+## 10. Persistence & Replay (WAL + Snapshots)
 
 `PersistenceLayer` gives us **lossless history** and **bitwise replay** without touching the hot path. It is split into two cooperating parts:
 
@@ -754,7 +754,7 @@ At system scope, repeat for all symbols; centralized Execution IDs (if enabled) 
 
 ---
 
-## SymbolCoordinator & Placement
+## 11. SymbolCoordinator & Placement
 
 `SymbolCoordinator` is the system’s **orchestrator** for per-symbol engines. It owns when engines exist, where they run, and how they’re wired. Its job is to keep thousands of independent `Whistle` instances **placed, pinned, observable, and fault-isolated**—without ever touching the hot path.
 
@@ -871,7 +871,7 @@ All counters/timers are emitted off the hot path; no formatting in `Whistle`.
 
 ---
 
-## Latency Model & Fairness
+## 12. Latency Model & Fairness
 
 **Goal:** make timing **deterministic and comparable** across humans and bots without hiding edge or introducing randomness. Latency is simulated, **stamped once** before enqueue, and never altered inside `Whistle`.
 
@@ -916,7 +916,7 @@ All counters/timers are emitted off the hot path; no formatting in `Whistle`.
 
 ---
 
-## StrategyEngine & Bots
+## 13. StrategyEngine & Bots
 
 **Goal:** provide realistic, programmable market participants that compete under the **same rules and latencies** as humans—without compromising determinism, safety, or isolation.
 
@@ -1023,7 +1023,7 @@ Same `InboundMsg` types as human flow; stamped with bot actor id and latency pro
 
 ---
 
-## Core Concurrency & Execution Model
+## 14. Core Concurrency & Execution Model
 
 Order flow and matching are optimized through **structured concurrency** and **buffered isolation per symbol**.
 
@@ -1076,7 +1076,7 @@ If an order arrives for a player whose `Whistle` engine is inactive:
 
 ---
 
-## Market Integrity and Fairness
+## 15. Market Integrity and Fairness
 
 Each component contributes to ensuring orderly, fair, and stable simulated markets.
 
@@ -1093,7 +1093,7 @@ Each component contributes to ensuring orderly, fair, and stable simulated marke
 
 ---
 
-## Testing Philosophy
+## 16. Testing Philosophy
 
 A core design principle of the Waiver Exchange is that every testable unit **must be tested, deterministically and repeatedly**. Testing is not an afterthought — it is embedded in every component’s interface, lifecycle, and data flow.
 
@@ -1119,7 +1119,7 @@ Testing is built on:
 
 ---
 
-## Implementation Guardrails
+## 17. Implementation Guardrails
 
 Critical violations that break system invariants and must be prevented during implementation.
 
@@ -1147,7 +1147,7 @@ Use compile-time checks, debug assertions, and property tests to catch violation
 
 ---
 
-## Project Goals
+## 18. Project Goals
 
 | **Category** | **Goal** |
 | --- | --- |
