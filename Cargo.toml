@@ -5,6 +5,8 @@ members = [
     "engine/whistle-bench",
     "engine/order-router",
     "engine/symbol-coordinator",
+    "engine/execution-manager",
+    "engine/load-testing",
     "tools/whistle-playground",
     "tools/whistle-monitor",
     "tools/symbol-coordinator-demo",

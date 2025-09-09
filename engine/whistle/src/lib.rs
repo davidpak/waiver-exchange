@@ -9,6 +9,7 @@ mod emitter;
 mod events;
 mod messages;
 mod order_index;
+mod outbound_queue;
 mod price_domain;
 mod queue;
 mod types;
@@ -24,6 +25,7 @@ pub use events::{
 };
 pub use messages::{Cancel, InboundMsg, MsgKind, Submit};
 pub use order_index::OrderIndex;
+pub use outbound_queue::{BackpressurePolicy, OutboundQueue};
 pub use price_domain::{Price, PriceDomain, PriceIdx};
 pub use queue::InboundQueue;
 pub use types::{AccountId, EnqSeq, H_NONE, OrderHandle, OrderId, OrderType, Qty, Side, TsNorm};
@@ -38,6 +40,7 @@ pub struct Whistle {
 
     // Order processing components
     inbound_queue: InboundQueue, // SPSC queue for messages from OrderRouter
+    outbound_queue: OutboundQueue, // MPSC queue for events to ExecutionManager
     arena: Arena,                // Preallocated order storage
     book: Book,                  // Order book with price-time priority
     order_index: OrderIndex,     // O(1) order lookup by order_id
@@ -55,6 +58,7 @@ impl Whistle {
 
         // Initialize order processing components
         let inbound_queue = InboundQueue::new(cfg.batch_max as usize);
+        let outbound_queue = OutboundQueue::with_default_capacity();
         let arena = Arena::with_capacity(cfg.arena_capacity);
         let book = Book::new(dom);
         let order_index = OrderIndex::with_capacity_pow2(cfg.arena_capacity as usize * 2); // 2x capacity for hash table
@@ -65,6 +69,7 @@ impl Whistle {
             emitter,
             seq_in_tick: 0,
             inbound_queue,
+            outbound_queue,
             arena,
             book,
             order_index,
@@ -75,6 +80,9 @@ impl Whistle {
 
     /// Process a tick - the core matching engine entry point
     /// This is where all order processing and matching occurs
+    ///
+    /// This method maintains backward compatibility by returning events as Vec.
+    /// For new ExecutionManager integration, use tick_with_queue_emission().
     pub fn tick(&mut self, t: TickId) -> Vec<EngineEvent> {
         // Start new tick - reset sequence counter and emitter
         self.seq_in_tick = 0;
@@ -139,6 +147,84 @@ impl Whistle {
 
         // Return all events for this tick
         self.emitter.take_events()
+    }
+
+    /// Process a tick with queue emission - new ExecutionManager integration
+    ///
+    /// This method processes orders and emits events directly to the OutboundQueue
+    /// instead of returning them as a Vec. This is the preferred method for
+    /// ExecutionManager integration.
+    pub fn tick_with_queue_emission(&mut self, t: TickId) {
+        // Start new tick - reset sequence counter and emitter
+        self.seq_in_tick = 0;
+        self.emitter.start_tick(t);
+
+        // Step 1: Drain inbound queue (up to batch_max)
+        let messages = self.inbound_queue.drain(self.cfg.batch_max as usize);
+
+        // Step 2: Process each message (validate, admit, queue for matching)
+        let mut orders_to_match = Vec::new();
+        let mut rejections = Vec::new();
+        for msg in messages {
+            match self.process_message(msg.clone(), t) {
+                Ok(handle) => orders_to_match.push(handle),
+                Err(reason) => {
+                    // Queue rejection for later emission
+                    rejections.push((msg, reason));
+                }
+            }
+        }
+
+        // Step 4: Match orders using price-time priority
+        let match_rejections = self.match_orders(&mut orders_to_match[..], t);
+
+        // Step 5: Extract order IDs for accepted orders (after matching/rejection)
+        // Only include orders that are still valid in the arena
+        let mut accepted_order_ids = Vec::new();
+        for handle in &orders_to_match {
+            if self.arena.is_valid(*handle) {
+                let order = self.arena.get(*handle);
+                accepted_order_ids.push(order.id);
+            }
+        }
+
+        // Step 6: Emit book delta events (coalesced)
+        self.emit_book_deltas(t);
+
+        // Step 7: Emit lifecycle events (accepted/rejected orders)
+        self.emit_lifecycle_events(rejections, &accepted_order_ids, t);
+
+        // Step 8: Emit lifecycle events for match rejections (only if there are any)
+        if !match_rejections.is_empty() {
+            for (order_id, reason) in match_rejections {
+                let lifecycle = EvLifecycle {
+                    symbol: self.cfg.symbol,
+                    tick: t,
+                    kind: LifecycleKind::Rejected,
+                    order_id,
+                    reason: Some(reason),
+                };
+                self.emitter
+                    .emit(EngineEvent::Lifecycle(lifecycle))
+                    .expect("Lifecycle event should always be valid");
+            }
+        }
+
+        // Emit tick complete event
+        let tick_complete = EvTickComplete { symbol: self.cfg.symbol, tick: t };
+        self.emitter
+            .emit(EngineEvent::TickComplete(tick_complete))
+            .expect("TickComplete should always be valid");
+
+        // Emit all events to the OutboundQueue
+        let events = self.emitter.take_events();
+        for event in events {
+            if self.outbound_queue.try_enqueue(event).is_err() {
+                // This should not happen with Fatal policy as it would exit the process
+                // But we handle it gracefully for safety
+                eprintln!("Failed to enqueue event to OutboundQueue");
+            }
+        }
     }
 
     #[inline]
@@ -430,6 +516,19 @@ impl Whistle {
     /// Clear the inbound queue
     pub fn clear_queue(&mut self) {
         self.inbound_queue.clear();
+    }
+
+    /// Get a reference to the OutboundQueue for ExecutionManager consumption
+    ///
+    /// This allows the ExecutionManager to drain events from the queue.
+    /// The queue is thread-safe and can be accessed from different threads.
+    pub fn outbound_queue(&self) -> &OutboundQueue {
+        &self.outbound_queue
+    }
+
+    /// Get outbound queue statistics for monitoring
+    pub fn outbound_queue_stats(&self) -> (usize, usize) {
+        (self.outbound_queue.len(), self.outbound_queue.capacity())
     }
 
     /// Get the symbol ID
@@ -1138,5 +1237,72 @@ mod tests {
                 assert_eq!(result.unwrap_err(), RejectReason::QueueBackpressure);
             }
         }
+    }
+
+    #[test]
+    fn test_tick_with_queue_emission() {
+        let cfg = EngineCfg {
+            symbol: 42,
+            price_domain: PriceDomain { floor: 100, ceil: 200, tick: 5 },
+            bands: Bands { mode: BandMode::Percent(1000) },
+            batch_max: 1024,
+            arena_capacity: 4096,
+            elastic_arena: false,
+            exec_shift_bits: 12,
+            exec_id_mode: ExecIdMode::Sharded,
+            self_match_policy: SelfMatchPolicy::Skip,
+            allow_market_cold_start: false,
+            reference_price_source: ReferencePriceSource::SnapshotLastTrade,
+        };
+        let mut eng = Whistle::new(cfg);
+
+        // Submit a simple order
+        let msg = InboundMsg::submit(1, 1, Side::Buy, OrderType::Limit, Some(150), 10, 1000, 0, 1);
+        eng.enqueue_message(msg).unwrap();
+
+        // Check initial queue state
+        let (len, capacity) = eng.outbound_queue_stats();
+        assert_eq!(len, 0);
+        assert_eq!(capacity, 8192); // Default capacity
+
+        // Process tick with queue emission
+        eng.tick_with_queue_emission(100);
+
+        // Check that events were emitted to the queue
+        let (len, _) = eng.outbound_queue_stats();
+        assert!(len > 0, "Should have events in outbound queue");
+
+        // Drain events from the queue to verify they were emitted correctly
+        let events = eng.outbound_queue().drain(100);
+        assert!(!events.is_empty(), "Should have events to drain");
+
+        // Verify event types and ordering
+        let mut found_tick_complete = false;
+        for event in &events {
+            match event {
+                EngineEvent::BookDelta(ev) => {
+                    assert_eq!(ev.symbol, 42);
+                    assert_eq!(ev.tick, 100);
+                }
+                EngineEvent::Lifecycle(ev) => {
+                    assert_eq!(ev.symbol, 42);
+                    assert_eq!(ev.tick, 100);
+                    assert_eq!(ev.order_id, 1);
+                }
+                EngineEvent::TickComplete(ev) => {
+                    assert_eq!(ev.symbol, 42);
+                    assert_eq!(ev.tick, 100);
+                    found_tick_complete = true;
+                }
+                EngineEvent::Trade(_) => {
+                    // No trades in this simple test
+                }
+            }
+        }
+        assert!(found_tick_complete, "Should have TickComplete event");
+
+        // Queue should be empty after draining
+        let (len, _) = eng.outbound_queue_stats();
+        assert_eq!(len, 0);
     }
 }
