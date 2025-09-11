@@ -6,7 +6,7 @@ members = [
     "engine/order-router",
     "engine/symbol-coordinator",
     "engine/execution-manager",
-    "tools/whistle-playground",
-    "tools/whistle-monitor",
+    "engine/analytics-engine",
+    "tools/admin-cli",
     "tools/symbol-coordinator-demo",
 ]

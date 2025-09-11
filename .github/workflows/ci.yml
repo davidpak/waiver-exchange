@@ -23,16 +23,16 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Format check
-        run: cargo fmt --package whistle --package order-router --package symbol-coordinator -- --check
+        run: cargo fmt --package whistle --package order-router --package symbol-coordinator --package execution-manager --package analytics-engine -- --check
 
       - name: Clippy (deny warnings)
-        run: cargo clippy --workspace --all-targets --exclude whistle-playground --exclude whistle-monitor -- -D warnings
+        run: cargo clippy --workspace --all-targets --exclude admin-cli -- -D warnings
 
       - name: Build
         run: cargo build --workspace --locked
 
       - name: Test
-        run: cargo test --workspace --locked
+        run: cargo test --workspace --exclude admin-cli --locked
 
       - name: Security advisories (cargo-audit)
         run: |

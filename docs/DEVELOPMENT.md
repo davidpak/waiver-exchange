@@ -9,7 +9,7 @@ Before pushing any changes, ensure you've completed the following:
 ### 1. Format Code
 ```bash
 # Core engine components only (recommended for development)
-cargo fmt --package whistle --package order-router --package symbol-coordinator
+cargo fmt --package whistle --package order-router --package symbol-coordinator --package execution-manager --package analytics-engine
 
 # Or format all components (may have formatting issues in tools)
 cargo fmt --all
@@ -18,7 +18,7 @@ cargo fmt --all
 ### 2. Lint as Errors
 ```bash
 # Core engine components only (recommended for development)
-cargo clippy --workspace --exclude whistle-playground --exclude whistle-monitor -- -D warnings
+cargo clippy --workspace --all-targets --exclude admin-cli -- -D warnings
 
 # Or run on all components (may have warnings in tools)
 cargo clippy --workspace -- -D warnings
@@ -32,7 +32,7 @@ cargo test --workspace
 ### 4. Verify No Formatting Diffs
 ```bash
 # Core engine components only (recommended for development)
-cargo fmt --package whistle --package order-router --package symbol-coordinator -- --check
+cargo fmt --package whistle --package order-router --package symbol-coordinator --package execution-manager --package analytics-engine -- --check
 
 # Or check all components (may have formatting issues in tools)
 cargo fmt --all -- --check
@@ -209,7 +209,7 @@ fn descriptive_test_name() {
 
 **⚠️ CRITICAL: Every new crate MUST have a license specified in its `Cargo.toml`**
 
-When creating a new crate (like `tools/whistle-playground`), you **must** add:
+When creating a new crate (like `tools/admin-cli` or `engine/analytics-engine`), you **must** add:
 
 ```toml
 [package]
@@ -241,7 +241,7 @@ Before pushing any new crate:
 
 ### Common License Errors & Solutions
 
-**Error:** `whistle-playground = 0.1.0 is unlicensed`
+**Error:** `admin-cli = 0.1.0 is unlicensed` or `analytics-engine = 0.1.0 is unlicensed`
 - **Solution:** Add `license = "Apache-2.0 OR MIT"` to `Cargo.toml`
 
 **Error:** `colored v2.2.0 license = "MPL-2.0" rejected: license is not explicitly allowed`
@@ -252,12 +252,12 @@ Before pushing any new crate:
 ### Formatting Issues
 
 **Problem:** CI fails with formatting diffs
-**Solution:** Run `cargo fmt --package whistle --package order-router --package symbol-coordinator` before pushing
+**Solution:** Run `cargo fmt --package whistle --package order-router --package symbol-coordinator --package execution-manager --package analytics-engine` before pushing
 
 ### Linting Issues
 
 **Problem:** CI fails with clippy warnings
-**Solution:** Run `cargo clippy --workspace --all-targets --exclude whistle-playground --exclude whistle-monitor -- -D warnings` and fix all warnings
+**Solution:** Run `cargo clippy --workspace --all-targets --exclude admin-cli -- -D warnings` and fix all warnings
 
 ### Test Failures
 
@@ -289,16 +289,16 @@ Before pushing any new crate:
 
 ```bash
 # This is what CI runs - run it locally first!
-cargo fmt --package whistle --package order-router --package symbol-coordinator -- --check
-cargo clippy --workspace --all-targets --exclude whistle-playground --exclude whistle-monitor -- -D warnings
+cargo fmt --package whistle --package order-router --package symbol-coordinator --package execution-manager --package analytics-engine -- --check
+cargo clippy --workspace --all-targets --exclude admin-cli -- -D warnings
 cargo test --workspace
 cargo audit --ignore RUSTSEC-2024-0436 -D warnings
 cargo deny check licenses  # ← Don't forget license compliance!
 ```
 
 **CI will fail if any of these fail:**
-- ❌ `cargo fmt --package whistle --package order-router --package symbol-coordinator -- --check` (formatting diffs)
-- ❌ `cargo clippy --workspace --all-targets --exclude whistle-playground --exclude whistle-monitor -- -D warnings` (linting errors)
+- ❌ `cargo fmt --package whistle --package order-router --package symbol-coordinator --package execution-manager --package analytics-engine -- --check` (formatting diffs)
+- ❌ `cargo clippy --workspace --all-targets --exclude admin-cli -- -D warnings` (linting errors)
 - ❌ `cargo test --workspace` (test failures)
 - ❌ `cargo audit --ignore RUSTSEC-2024-0436 -D warnings` (security vulnerabilities)
 - ❌ `cargo deny check licenses` (license violations)
@@ -307,12 +307,12 @@ cargo deny check licenses  # ← Don't forget license compliance!
 
 ```bash
 # 1. Run the full checklist
-cargo fmt --package whistle --package order-router --package symbol-coordinator
-cargo clippy --workspace --all-targets --exclude whistle-playground --exclude whistle-monitor -- -D warnings
+cargo fmt --package whistle --package order-router --package symbol-coordinator --package execution-manager --package analytics-engine
+cargo clippy --workspace --all-targets --exclude admin-cli -- -D warnings
 cargo test --workspace
 cargo audit --ignore RUSTSEC-2024-0436 -D warnings
 cargo deny check licenses  # ← License compliance check
-cargo fmt --package whistle --package order-router --package symbol-coordinator -- --check
+cargo fmt --package whistle --package order-router --package symbol-coordinator --package execution-manager --package analytics-engine -- --check
 ```
 ```
 ```
