@@ -1,0 +1,77 @@
+syntax = "proto3";
+
+package waiver.analytics;
+
+// Main analytics event from ExecutionManager
+message AnalyticsEvent {
+  uint64 timestamp_ns = 1;
+  uint64 tick_id = 2;
+  string symbol = 3;
+  EventType event_type = 4;
+  
+  oneof data {
+    PerformanceMetrics performance = 5;
+    BusinessMetrics business = 6;
+    SystemHealthMetrics health = 7;
+    OperationalMetrics operational = 8;
+  }
+}
+
+enum EventType {
+  PERFORMANCE = 0;
+  BUSINESS = 1;
+  SYSTEM_HEALTH = 2;
+  OPERATIONAL = 3;
+}
+
+message PerformanceMetrics {
+  uint64 tick_duration_ns = 1;
+  uint64 event_processing_latency_ns = 2;
+  uint32 queue_depth = 3;
+  uint64 memory_usage_bytes = 4;
+  double cpu_utilization_percent = 5;
+  uint32 thread_count = 6;
+}
+
+message BusinessMetrics {
+  uint32 orders_processed = 1;
+  uint32 trades_executed = 2;
+  uint64 volume_traded = 3;
+  uint32 active_accounts = 4;
+  uint32 order_book_depth = 5;
+  double average_trade_size = 6;
+}
+
+message SystemHealthMetrics {
+  bool engine_crashed = 1;
+  uint32 queue_overflows = 2;
+  uint32 memory_allocation_failures = 3;
+  double error_rate_percent = 4;
+  uint64 uptime_seconds = 5;
+  string error_message = 6;
+}
+
+message OperationalMetrics {
+  bool symbol_activated = 1;
+  bool symbol_evicted = 2;
+  double thread_utilization_percent = 3;
+  uint64 network_bytes_sent = 4;
+  uint64 disk_bytes_written = 5;
+  uint32 active_symbols = 6;
+}
+
+// Service definition for analytics ingestion
+service AnalyticsService {
+  rpc IngestEvent(AnalyticsEvent) returns (IngestResponse);
+  rpc IngestBatch(AnalyticsBatch) returns (IngestResponse);
+}
+
+message AnalyticsBatch {
+  repeated AnalyticsEvent events = 1;
+}
+
+message IngestResponse {
+  bool success = 1;
+  string message = 2;
+  uint32 processed_count = 3;
+}

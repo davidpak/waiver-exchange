@@ -1,0 +1,56 @@
+[package]
+name = "analytics-engine"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+description = "Analytics and observability engine for Waiver Exchange"
+authors = ["Waiver Exchange Team"]
+
+[dependencies]
+# Core dependencies
+tokio = { version = "1.0", features = ["full"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+anyhow = "1.0"
+thiserror = "1.0"
+
+# Protobuf support
+prost = "0.12"
+prost-types = "0.12"
+
+# Parquet storage (simplified for now)
+# parquet = "50.0"
+# arrow = "50.0"
+# datafusion = "37.0"
+
+# Time and utilities
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+dashmap = "5.5"
+parking_lot = "0.12"
+
+# Configuration
+clap = { version = "4.0", features = ["derive"] }
+toml = "0.8"
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Async utilities
+futures = "0.3"
+async-trait = "0.1"
+
+# System monitoring
+sysinfo = "0.30"
+
+[[bin]]
+name = "analytics-cli"
+path = "src/bin/analytics-cli.rs"
+
+[dev-dependencies]
+tokio-test = "0.4"
+tempfile = "3.0"
+
+[build-dependencies]
+prost-build = "0.12"
