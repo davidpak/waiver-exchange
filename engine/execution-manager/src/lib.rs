@@ -1,5 +1,6 @@
 // ExecutionManager - post-match event distribution and fanout service
 
+mod analytics_converter;
 mod config;
 mod dispatch;
 mod event;
@@ -152,9 +153,7 @@ impl ExecutionManager {
             }
 
             // Dispatch to downstream systems
-            self.dispatcher
-                .dispatch(normalized.clone())
-                .map_err(ExecutionError::DispatchFailed)?;
+            self.dispatcher.dispatch(normalized.clone()).map_err(ExecutionError::DispatchFailed)?;
 
             // Update tick tracking
             self.tick_tracker
@@ -210,6 +209,14 @@ impl ExecutionManager {
         self.metrics.ticks_flushed_total.inc();
 
         Ok(())
+    }
+
+    /// Set up analytics integration
+    pub fn set_analytics_sender(
+        &mut self,
+        sender: tokio::sync::mpsc::UnboundedSender<analytics_engine::analytics::AnalyticsEvent>,
+    ) {
+        self.dispatcher.set_analytics_sender(sender);
     }
 
     /// Get current metrics for monitoring
