@@ -1,5 +1,5 @@
 //! # Analytics Protobuf Definitions
-//! 
+//!
 //! Manual protobuf definitions for analytics events.
 
 use serde::{Deserialize, Serialize};
@@ -16,7 +16,7 @@ pub struct AnalyticsEvent {
 
 pub mod analytics_event {
     use super::*;
-    
+
     #[derive(Debug, Clone, Serialize, Deserialize)]
     pub enum Data {
         Performance(PerformanceMetrics),

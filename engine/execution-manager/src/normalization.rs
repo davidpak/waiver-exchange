@@ -7,9 +7,7 @@ use crate::event::{
 };
 use crate::id_allocator::ExecutionIdAllocator;
 use std::time::Instant;
-use whistle::{
-    EngineEvent, LifecycleKind,
-};
+use whistle::{EngineEvent, LifecycleKind};
 
 /// Event normalizer for converting Whistle events to ExecutionManager events
 pub struct EventNormalizer {
@@ -132,7 +130,9 @@ pub type NormalizedEvent = DispatchEvent;
 mod tests {
     use super::*;
     use crate::config::NormalizationConfig;
-    use whistle::{EvBookDelta, EvLifecycle, EvTickComplete, EvTrade, LifecycleKind, RejectReason, Side};
+    use whistle::{
+        EvBookDelta, EvLifecycle, EvTickComplete, EvTrade, LifecycleKind, RejectReason, Side,
+    };
 
     fn create_test_normalizer() -> EventNormalizer {
         EventNormalizer::new(NormalizationConfig::default())

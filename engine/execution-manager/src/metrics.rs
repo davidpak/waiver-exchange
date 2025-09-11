@@ -284,8 +284,8 @@ impl MetricsCollector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::thread;
     use std::sync::Arc;
+    use std::thread;
     // Removed unused Duration import
 
     #[test]

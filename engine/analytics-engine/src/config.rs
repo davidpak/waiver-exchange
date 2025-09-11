@@ -1,5 +1,5 @@
 //! # Configuration Management
-//! 
+//!
 //! Configuration structures and management for the AnalyticsEngine.
 
 use serde::{Deserialize, Serialize};
@@ -7,7 +7,7 @@ use std::path::PathBuf;
 // Removed unused import
 
 /// Main configuration for the AnalyticsEngine
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct AnalyticsConfig {
     /// Storage configuration
     pub storage: StorageConfig,
@@ -19,18 +19,6 @@ pub struct AnalyticsConfig {
     pub query: QueryConfig,
     /// Retention configuration
     pub retention: RetentionConfig,
-}
-
-impl Default for AnalyticsConfig {
-    fn default() -> Self {
-        Self {
-            storage: StorageConfig::default(),
-            ingestion: IngestionConfig::default(),
-            aggregation: AggregationConfig::default(),
-            query: QueryConfig::default(),
-            retention: RetentionConfig::default(),
-        }
-    }
 }
 
 /// Storage configuration
@@ -184,14 +172,14 @@ impl AnalyticsConfig {
         let config: AnalyticsConfig = toml::from_str(&content)?;
         Ok(config)
     }
-    
+
     /// Save configuration to file
     pub fn save_to_file(&self, path: &str) -> Result<(), anyhow::Error> {
         let content = toml::to_string_pretty(self)?;
         std::fs::write(path, content)?;
         Ok(())
     }
-    
+
     /// Get storage path for the config
     pub fn storage_path(&self) -> &PathBuf {
         &self.storage.base_path
