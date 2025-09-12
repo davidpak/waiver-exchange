@@ -29,8 +29,12 @@ async fn main() -> Result<()> {
     info!("Service state initialized");
 
     // Recover system state from persistence
-    service_state.recover_system_state().await?;
+    let recovered_tick = service_state.recover_system_state().await?;
     info!("System state recovery completed");
+
+    // Recreate SimulationClock with the correct initial tick
+    service_state.recreate_simulation_clock(recovered_tick).await?;
+    info!("SimulationClock recreated with initial tick: {}", recovered_tick);
 
     // Setup signal handlers for graceful shutdown
     let shutdown_signal = setup_signal_handlers(service_state.clone())?;

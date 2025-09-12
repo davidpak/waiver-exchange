@@ -55,10 +55,31 @@ impl SimulationClock {
         persistence: Arc<dyn PersistenceBackend>,
         config: ClockConfig,
     ) -> Result<Self, ClockError> {
+        Self::new_with_initial_tick(
+            symbol_coordinator,
+            execution_manager,
+            order_router,
+            persistence,
+            config,
+            0, // Default to starting from tick 0
+        )
+    }
+
+    /// Create a new SimulationClock with a specific initial tick
+    pub fn new_with_initial_tick(
+        symbol_coordinator: Arc<SymbolCoordinator>,
+        execution_manager: Arc<ExecutionManager>,
+        order_router: Arc<OrderRouter>,
+        persistence: Arc<dyn PersistenceBackend>,
+        config: ClockConfig,
+        initial_tick: u64,
+    ) -> Result<Self, ClockError> {
         let metrics_collector = Arc::new(MetricsCollector::new(1000)); // Keep 1000 tick history
 
+        tracing::info!("Creating SimulationClock with initial tick: {}", initial_tick);
+
         Ok(Self {
-            current_tick: AtomicU64::new(0),
+            current_tick: AtomicU64::new(initial_tick),
             is_running: AtomicBool::new(false),
             active_symbols: Arc::new(RwLock::new(BTreeMap::new())),
             symbol_coordinator,
@@ -94,12 +115,17 @@ impl SimulationClock {
             // Update SymbolCoordinator with current tick
             self.symbol_coordinator.update_current_tick(current_tick);
 
+            // Check for newly activated symbols BEFORE processing them
+            self.check_for_new_symbols()?;
+
             // Process all active symbols concurrently
             let (_symbols_processed, _symbol_failures) =
                 self.process_tick_concurrent(current_tick).await?;
 
-            // Check for newly activated symbols
-            self.check_for_new_symbols()?;
+            // Debug: Log when ExecutionManager should be processing events
+            if current_tick % 100 == 0 {
+                // Removed spam logging for every tick completion
+            }
 
             // Process evictions at tick boundary
             self.process_evictions().await?;
@@ -150,12 +176,16 @@ impl SimulationClock {
             return Err(ClockError::SymbolAlreadyRegistered { symbol_id });
         }
 
+        // Register with ExecutionManager so it can process events for this symbol
+        tracing::info!("Registering symbol {} with ExecutionManager", symbol_id);
+        self.execution_manager.register_symbol(symbol_id);
+
         // For now, just track the symbol ID
         // TODO: Integrate with SymbolCoordinator to get actual handles
         symbols.insert(symbol_id, 0); // Placeholder value
         self.metrics_collector.update_active_symbols(symbols.len() as u32);
 
-        tracing::info!("Registered symbol {} with SimulationClock", symbol_id);
+        tracing::info!("Registered symbol {} with SimulationClock and ExecutionManager", symbol_id);
         Ok(())
     }
 
@@ -167,8 +197,14 @@ impl SimulationClock {
             .map_err(|_| ClockError::Internal("Failed to acquire symbols lock".to_string()))?;
 
         if symbols.remove(&symbol_id).is_some() {
+            // Deregister from ExecutionManager as well
+            self.execution_manager.deregister_symbol(symbol_id);
+
             self.metrics_collector.update_active_symbols(symbols.len() as u32);
-            tracing::info!("Unregistered symbol {} from SimulationClock", symbol_id);
+            tracing::info!(
+                "Unregistered symbol {} from SimulationClock and ExecutionManager",
+                symbol_id
+            );
         }
 
         Ok(())
@@ -286,6 +322,23 @@ impl SimulationClock {
                 // Get the Whistle engine's OutboundQueue and process events through ExecutionManager
                 match self.symbol_coordinator.get_outbound_queue(symbol_id) {
                     Ok(outbound_queue) => {
+                        // Check if there are events to process
+                        let queue_len = outbound_queue.len();
+                        if queue_len > 0 {
+                            tracing::info!(
+                                "SimulationClock: Found {} events in OutboundQueue for symbol {} at tick {}, calling ExecutionManager",
+                                queue_len,
+                                symbol_id,
+                                tick
+                            );
+                        } else if tick % 1000 == 0 {
+                            tracing::debug!(
+                                "SimulationClock: No events in OutboundQueue for symbol {} at tick {}",
+                                symbol_id,
+                                tick
+                            );
+                        }
+
                         // Process events through ExecutionManager (proper architectural flow)
                         // SimulationClock coordinates with ExecutionManager to process events
                         if let Err(e) =
@@ -295,6 +348,13 @@ impl SimulationClock {
                                 "Failed to process events for symbol {}: {:?}",
                                 symbol_id,
                                 e
+                            );
+                        } else if queue_len > 0 {
+                            tracing::info!(
+                                "Successfully processed {} events for symbol {} at tick {}",
+                                queue_len,
+                                symbol_id,
+                                tick
                             );
                         }
                     }
@@ -467,24 +527,41 @@ impl SimulationClock {
         // Collect system state
         let active_symbols = self.symbol_coordinator.get_active_symbol_ids();
 
-        // For now, create empty order books and accounts
-        // TODO: In the future, we'll collect actual order book state from Whistle engines
+        // Collect real order book state from Whistle engines
         let mut order_books = HashMap::new();
         for &symbol_id in &active_symbols {
-            order_books.insert(
-                symbol_id,
+            // Get real order book state from Whistle engine
+            let (buy_levels, sell_levels) = self
+                .symbol_coordinator
+                .get_order_book_state(symbol_id)
+                .unwrap_or((Vec::new(), Vec::new()));
+
+            // Convert Vec<(price, qty)> to HashMap<price, qty>
+            let buy_orders: HashMap<u64, u64> =
+                buy_levels.into_iter().map(|(price, qty)| (price as u64, qty as u64)).collect();
+            let sell_orders: HashMap<u64, u64> =
+                sell_levels.into_iter().map(|(price, qty)| (price as u64, qty as u64)).collect();
+
+            order_books.insert(symbol_id, {
+                // Get trade information from SymbolCoordinator
+                let (last_trade_price, last_trade_quantity, last_trade_timestamp) = self
+                    .symbol_coordinator
+                    .get_last_trade_info(symbol_id)
+                    .unwrap_or((None, None, None));
+
                 OrderBookState {
                     symbol_id,
-                    buy_orders: HashMap::new(),
-                    sell_orders: HashMap::new(),
-                    last_trade_price: None,
-                    last_trade_quantity: None,
-                    last_trade_timestamp: None,
-                },
-            );
+                    buy_orders,
+                    sell_orders,
+                    last_trade_price,
+                    last_trade_quantity,
+                    last_trade_timestamp,
+                }
+            });
         }
 
-        let accounts = HashMap::new(); // TODO: Collect from AccountService
+        // Collect account state from ExecutionManager
+        let accounts = HashMap::new(); // TODO: Collect from AccountService when implemented
 
         let system_config = SystemConfig {
             max_symbols: self.config.max_concurrent_symbols as u32,
@@ -493,12 +570,15 @@ impl SimulationClock {
         };
 
         let _metrics = self.metrics_collector.get_metrics();
+
+        // Collect real stats from ExecutionManager
+        let execution_stats = self.execution_manager.get_stats();
         let system_stats = SystemStats {
-            total_orders: 0, // TODO: Collect from ExecutionManager
-            total_trades: 0, // TODO: Collect from ExecutionManager
-            total_volume: 0, // TODO: Collect from ExecutionManager
+            total_orders: execution_stats.total_orders,
+            total_trades: execution_stats.total_trades,
+            total_volume: execution_stats.total_volume,
             current_tick: tick,
-            uptime_seconds: 0, // TODO: Calculate from start time
+            uptime_seconds: execution_stats.uptime.as_secs(),
         };
 
         let state = SystemState {

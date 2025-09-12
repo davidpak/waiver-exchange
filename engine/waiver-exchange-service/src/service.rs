@@ -132,7 +132,7 @@ impl ServiceState {
     }
 
     /// Recover system state from persistence
-    pub async fn recover_system_state(&self) -> Result<()> {
+    pub async fn recover_system_state(&self) -> Result<u64> {
         info!("Starting system state recovery...");
 
         // Use the already-initialized persistence backend
@@ -142,11 +142,32 @@ impl ServiceState {
             .await
             .context("Failed to load latest snapshot")?;
 
-        if let Some(snapshot) = snapshot {
+        let recovered_tick = if let Some(snapshot) = snapshot {
             info!("Found snapshot at tick {}, recovering state...", snapshot.tick);
+            info!("Snapshot ID: {}", snapshot.id);
+            info!("Snapshot timestamp: {}", snapshot.timestamp);
 
             // Restore SymbolCoordinator state from snapshot
             info!("Snapshot contains {} symbols", snapshot.state.active_symbols.len());
+            info!("Snapshot contains {} order books", snapshot.state.order_books.len());
+
+            // Log order book details
+            for (symbol_id, order_book) in &snapshot.state.order_books {
+                info!(
+                    "Order book for symbol {}: {} buy orders, {} sell orders",
+                    symbol_id,
+                    order_book.buy_orders.len(),
+                    order_book.sell_orders.len()
+                );
+
+                // Log specific order details
+                for (price, qty) in &order_book.buy_orders {
+                    info!("  Buy order: price={}, qty={}", price, qty);
+                }
+                for (price, qty) in &order_book.sell_orders {
+                    info!("  Sell order: price={}, qty={}", price, qty);
+                }
+            }
 
             // Register all symbols from the snapshot with SymbolCoordinator
             for &symbol_id in &snapshot.state.active_symbols {
@@ -155,17 +176,61 @@ impl ServiceState {
                     warn!("Failed to restore symbol {}: {:?}", symbol_id, e);
                 } else {
                     info!("Restored symbol {}", symbol_id);
+
+                    // Restore order book state for this symbol
+                    if let Some(order_book) = snapshot.state.order_books.get(&symbol_id) {
+                        if let Err(e) = self.symbol_coordinator.restore_order_book_state(
+                            symbol_id,
+                            &order_book.buy_orders,
+                            &order_book.sell_orders,
+                            order_book.last_trade_price,
+                            order_book.last_trade_quantity,
+                            order_book.last_trade_timestamp,
+                        ) {
+                            warn!(
+                                "Failed to restore order book state for symbol {}: {:?}",
+                                symbol_id, e
+                            );
+                        } else {
+                            info!("Restored order book state for symbol {}", symbol_id);
+                        }
+                    }
                 }
             }
 
             // TODO: Replay WAL from snapshot tick to current
             // For now, we'll just log that we would replay WAL
             info!("Would replay WAL from tick {} to current", snapshot.tick);
+
+            // Return the next tick to continue from
+            snapshot.tick + 1
         } else {
             info!("No snapshot found, starting with clean state");
-        }
+            0 // Start from tick 0
+        };
 
-        info!("System state recovery completed");
+        info!("System state recovery completed, will continue from tick {}", recovered_tick);
+        Ok(recovered_tick)
+    }
+
+    /// Recreate SimulationClock with the correct initial tick
+    pub async fn recreate_simulation_clock(&self, initial_tick: u64) -> Result<()> {
+        info!("Recreating SimulationClock with initial tick: {}", initial_tick);
+
+        let new_clock = SimulationClock::new_with_initial_tick(
+            self.symbol_coordinator.clone(),
+            self.execution_manager.clone(),
+            self.order_router.clone(),
+            self.persistence.clone(),
+            self.config.clock.clone(),
+            initial_tick,
+        )
+        .context("Failed to recreate SimulationClock")?;
+
+        let mut clock_guard = self.simulation_clock.write().await;
+        *clock_guard = Some(new_clock);
+
+        info!("SimulationClock recreated successfully");
         Ok(())
     }
 

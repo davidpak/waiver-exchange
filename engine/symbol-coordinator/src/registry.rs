@@ -49,7 +49,11 @@ impl SymbolEntry {
             order_tx: crate::types::OrderQueueWriter { queue: shared_queue.clone() },
             metadata,
             tick_flag: std::sync::atomic::AtomicBool::new(false),
-            engine: whistle::Whistle::new_with_inbound_queue(engine_cfg, shared_queue.clone()),
+            engine: whistle::Whistle::new_with_queues(
+                engine_cfg,
+                shared_queue.clone(),
+                outbound_queue.clone(),
+            ),
             outbound_queue,
         };
 

@@ -11,6 +11,12 @@ use whistle::{
     Whistle,
 };
 
+/// Type alias for order book state to reduce complexity
+type OrderBookState = (Vec<(u32, u32)>, Vec<(u32, u32)>);
+
+/// Type alias for trade info to reduce complexity
+type TradeInfo = (Option<u64>, Option<u64>, Option<chrono::DateTime<chrono::Utc>>);
+
 /// Main SymbolCoordinator implementation
 /// Uses interior mutability to allow mutation through immutable references
 pub struct SymbolCoordinator {
@@ -135,6 +141,65 @@ impl SymbolCoordinator {
         } else {
             Vec::new()
         }
+    }
+
+    /// Get order book state for a specific symbol
+    pub fn get_order_book_state(&self, symbol_id: SymbolId) -> Option<OrderBookState> {
+        if let Ok(inner) = self.inner.lock() {
+            if let Some(entry) = inner.registry.get_entry(symbol_id) {
+                if entry.state == crate::types::SymbolState::Active {
+                    let buy_orders =
+                        entry.whistle_handle.engine.get_order_book_levels(whistle::Side::Buy);
+                    let sell_orders =
+                        entry.whistle_handle.engine.get_order_book_levels(whistle::Side::Sell);
+                    return Some((buy_orders, sell_orders));
+                }
+            }
+        }
+        None
+    }
+
+    /// Restore order book state for a specific symbol
+    pub fn restore_order_book_state(
+        &self,
+        symbol_id: SymbolId,
+        buy_orders: &std::collections::HashMap<u64, u64>,
+        sell_orders: &std::collections::HashMap<u64, u64>,
+        last_trade_price: Option<u64>,
+        last_trade_quantity: Option<u64>,
+        last_trade_timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Ok(mut inner) = self.inner.lock() {
+            if let Some(entry) = inner.registry.get_entry_mut(symbol_id) {
+                if entry.state == crate::types::SymbolState::Active {
+                    entry.whistle_handle.engine.restore_order_book_state(
+                        buy_orders,
+                        sell_orders,
+                        last_trade_price,
+                        last_trade_quantity,
+                        last_trade_timestamp,
+                    );
+                    tracing::info!("Restored order book state for symbol {}", symbol_id);
+                    return Ok(());
+                }
+            }
+        }
+        Err(format!("Failed to restore order book state for symbol {symbol_id}").into())
+    }
+
+    /// Get the latest trade information for a symbol
+    pub fn get_last_trade_info(
+        &self,
+        symbol_id: SymbolId,
+    ) -> Result<TradeInfo, Box<dyn std::error::Error>> {
+        if let Ok(inner) = self.inner.lock() {
+            if let Some(entry) = inner.registry.get_entry(symbol_id) {
+                if entry.state == crate::types::SymbolState::Active {
+                    return Ok(entry.whistle_handle.engine.get_last_trade_info());
+                }
+            }
+        }
+        Err(format!("Failed to get trade info for symbol {symbol_id}").into())
     }
 
     /// Process a tick for a specific symbol
@@ -278,9 +343,15 @@ impl SymbolCoordinator {
                     let queue_len = entry.whistle_handle.outbound_queue.len();
                     if queue_len > 0 {
                         tracing::info!(
-                            "Symbol {} processed {} events at tick {}",
+                            "Symbol {} has {} events in OutboundQueue at tick {}",
                             symbol_id,
                             queue_len,
+                            tick
+                        );
+                    } else if tick % 1000 == 0 {
+                        tracing::debug!(
+                            "Symbol {} has 0 events in OutboundQueue at tick {}",
+                            symbol_id,
                             tick
                         );
                     }
