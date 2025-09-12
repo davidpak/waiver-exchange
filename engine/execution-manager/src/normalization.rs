@@ -32,7 +32,7 @@ impl EventNormalizer {
                 let execution_id = id_allocator.allocate_with_tick(trade.tick);
 
                 // Create execution report
-                let execution_report = ExecutionReport {
+                let _execution_report = ExecutionReport {
                     execution_id,
                     order_id: trade.taker_order,
                     price: trade.price,
@@ -45,7 +45,7 @@ impl EventNormalizer {
                 };
 
                 // Create trade event
-                let _trade_event = TradeEvent {
+                let trade_event = TradeEvent {
                     symbol: trade.symbol,
                     price: trade.price,
                     quantity: trade.qty,
@@ -53,10 +53,12 @@ impl EventNormalizer {
                     logical_timestamp: trade.tick,
                     wall_clock_timestamp: now,
                     execution_id,
+                    maker_order_id: trade.maker_order,
+                    taker_order_id: trade.taker_order,
                 };
 
-                // Return both events (in practice, we'd dispatch both)
-                Ok(DispatchEvent::ExecutionReport(execution_report))
+                // Return the trade event (we'll dispatch both ExecutionReport and TradeEvent in the future)
+                Ok(DispatchEvent::TradeEvent(trade_event))
             }
 
             EngineEvent::BookDelta(book_delta) => {
@@ -108,6 +110,11 @@ impl EventNormalizer {
                             logical_timestamp: lifecycle.tick,
                             wall_clock_timestamp: now,
                             symbol: lifecycle.symbol,
+                            account_id: lifecycle.account_id,
+                            side: lifecycle.side,
+                            price: lifecycle.price,
+                            quantity: lifecycle.quantity,
+                            order_type: lifecycle.order_type,
                         };
 
                         Ok(DispatchEvent::OrderSubmitted(order_submitted))
@@ -163,15 +170,15 @@ mod tests {
         let normalized = normalizer.normalize(trade, &id_allocator).unwrap();
 
         match normalized {
-            DispatchEvent::ExecutionReport(report) => {
-                assert_eq!(report.order_id, 2);
-                assert_eq!(report.price, 150);
-                assert_eq!(report.quantity, 10);
-                assert_eq!(report.side, Side::Buy);
-                assert!(report.aggressor_flag);
-                assert_eq!(report.symbol, 1);
+            DispatchEvent::TradeEvent(trade) => {
+                assert_eq!(trade.taker_order_id, 2);
+                assert_eq!(trade.price, 150);
+                assert_eq!(trade.quantity, 10);
+                assert_eq!(trade.aggressor_side, Side::Buy);
+                assert_eq!(trade.symbol, 1);
+                assert_eq!(trade.maker_order_id, 1);
             }
-            _ => panic!("Expected ExecutionReport"),
+            _ => panic!("Expected TradeEvent"),
         }
     }
 
@@ -213,6 +220,11 @@ mod tests {
             kind: LifecycleKind::Cancelled,
             order_id: 123,
             reason: None,
+            account_id: 456,
+            side: whistle::Side::Buy,
+            price: Some(150),
+            quantity: 10,
+            order_type: 0, // limit
         });
 
         let normalized = normalizer.normalize(lifecycle, &id_allocator).unwrap();
@@ -232,6 +244,11 @@ mod tests {
             kind: LifecycleKind::Rejected,
             order_id: 124,
             reason: Some(RejectReason::BadTick),
+            account_id: 789,
+            side: whistle::Side::Sell,
+            price: Some(200),
+            quantity: 5,
+            order_type: 1, // market
         });
 
         let normalized = normalizer.normalize(lifecycle, &id_allocator).unwrap();
