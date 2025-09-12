@@ -40,7 +40,7 @@ pub struct Whistle {
 
     // Order processing components
     inbound_queue: std::sync::Arc<InboundQueue>, // SPSC queue for messages from OrderRouter
-    outbound_queue: OutboundQueue,               // MPSC queue for events to ExecutionManager
+    outbound_queue: std::sync::Arc<OutboundQueue>, // MPSC queue for events to ExecutionManager
     arena: Arena,                                // Preallocated order storage
     book: Book,                                  // Order book with price-time priority
     order_index: OrderIndex,                     // O(1) order lookup by order_id
@@ -48,6 +48,11 @@ pub struct Whistle {
     // State tracking
     reference_price: Option<Price>, // Current reference price for bands
     modified_levels: std::collections::HashSet<(Side, PriceIdx)>, // Track levels modified during tick
+
+    // Trade tracking
+    last_trade_price: Option<u64>,
+    last_trade_quantity: Option<u64>,
+    last_trade_timestamp: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 impl Whistle {
@@ -58,7 +63,7 @@ impl Whistle {
 
         // Initialize order processing components
         let inbound_queue = std::sync::Arc::new(InboundQueue::new(cfg.batch_max as usize));
-        let outbound_queue = OutboundQueue::with_default_capacity();
+        let outbound_queue = std::sync::Arc::new(OutboundQueue::with_default_capacity());
         let arena = Arena::with_capacity(cfg.arena_capacity);
         let book = Book::new(dom);
         let order_index = OrderIndex::with_capacity_pow2(cfg.arena_capacity as usize * 2); // 2x capacity for hash table
@@ -75,6 +80,9 @@ impl Whistle {
             order_index,
             reference_price: None,
             modified_levels: std::collections::HashSet::new(),
+            last_trade_price: None,
+            last_trade_quantity: None,
+            last_trade_timestamp: None,
         }
     }
 
@@ -88,7 +96,7 @@ impl Whistle {
         let emitter = EventEmitter::new(cfg.symbol);
 
         // Use the provided inbound queue instead of creating a new one
-        let outbound_queue = OutboundQueue::with_default_capacity();
+        let outbound_queue = std::sync::Arc::new(OutboundQueue::with_default_capacity());
         let arena = Arena::with_capacity(cfg.arena_capacity);
         let book = Book::new(dom);
         let order_index = OrderIndex::with_capacity_pow2(cfg.arena_capacity as usize * 2); // 2x capacity for hash table
@@ -105,6 +113,41 @@ impl Whistle {
             order_index,
             reference_price: None,
             modified_levels: std::collections::HashSet::new(),
+            last_trade_price: None,
+            last_trade_quantity: None,
+            last_trade_timestamp: None,
+        }
+    }
+
+    /// Create a new Whistle with both inbound and outbound queues (for SymbolCoordinator integration)
+    pub fn new_with_queues(
+        cfg: EngineCfg,
+        inbound_queue: std::sync::Arc<InboundQueue>,
+        outbound_queue: std::sync::Arc<OutboundQueue>,
+    ) -> Self {
+        cfg.validate().expect("invalid EngineCfg");
+        let dom = cfg.price_domain;
+        let emitter = EventEmitter::new(cfg.symbol);
+
+        let arena = Arena::with_capacity(cfg.arena_capacity);
+        let book = Book::new(dom);
+        let order_index = OrderIndex::with_capacity_pow2(cfg.arena_capacity as usize * 2); // 2x capacity for hash table
+
+        Self {
+            cfg,
+            dom,
+            emitter,
+            seq_in_tick: 0,
+            inbound_queue,
+            outbound_queue,
+            arena,
+            book,
+            order_index,
+            reference_price: None,
+            modified_levels: std::collections::HashSet::new(),
+            last_trade_price: None,
+            last_trade_quantity: None,
+            last_trade_timestamp: None,
         }
     }
 
@@ -153,15 +196,22 @@ impl Whistle {
         }
 
         // Step 4: Match orders using price-time priority
-        let match_rejections = self.match_orders(&mut orders_to_match[..], t);
+        let _match_rejections = self.match_orders(&mut orders_to_match[..], t);
 
-        // Step 5: Extract order IDs for accepted orders (after matching/rejection)
-        // Only include orders that are still valid in the arena
-        let mut accepted_order_ids = Vec::new();
+        // Step 5: Extract order data for accepted orders (after matching/rejection)
+        // Capture order data before any orders might be freed from the arena
+        let mut accepted_order_data = Vec::new();
         for handle in &orders_to_match {
             if self.arena.is_valid(*handle) {
                 let order = self.arena.get(*handle);
-                accepted_order_ids.push(order.id);
+                accepted_order_data.push((
+                    order.id,
+                    order.acct,
+                    order.side,
+                    order.price_idx,
+                    order.qty_open,
+                    order.typ,
+                ));
             }
         }
 
@@ -169,23 +219,9 @@ impl Whistle {
         self.emit_book_deltas(t);
 
         // Step 7: Emit lifecycle events (accepted/rejected orders)
-        self.emit_lifecycle_events(rejections, &accepted_order_ids, t);
+        self.emit_lifecycle_events(rejections, &accepted_order_data, t);
 
-        // Step 8: Emit lifecycle events for match rejections (only if there are any)
-        if !match_rejections.is_empty() {
-            for (order_id, reason) in match_rejections {
-                let lifecycle = EvLifecycle {
-                    symbol: self.cfg.symbol,
-                    tick: t,
-                    kind: LifecycleKind::Rejected,
-                    order_id,
-                    reason: Some(reason),
-                };
-                self.emitter
-                    .emit(EngineEvent::Lifecycle(lifecycle))
-                    .expect("Lifecycle event should always be valid");
-            }
-        }
+        // Step 8: Match rejections are now handled in Step 5 above
 
         // Always emit TickComplete for the tick method (for backward compatibility with tests)
         let tick_complete = EvTickComplete { symbol: self.cfg.symbol, tick: t };
@@ -244,13 +280,44 @@ impl Whistle {
         // Step 4: Match orders using price-time priority
         let match_rejections = self.match_orders(&mut orders_to_match[..], t);
 
-        // Step 5: Extract order IDs for accepted orders (after matching/rejection)
-        // Only include orders that are still valid in the arena
-        let mut accepted_order_ids = Vec::new();
+        // Step 5: Add match rejections to the rejections vector
+        // Convert (OrderId, RejectReason) to (InboundMsg, RejectReason) format
+        for (order_id, reason) in match_rejections.into_iter() {
+            // Find the original message for this order ID
+            // For now, create a placeholder message - this is a limitation of the current design
+            // TODO: Improve this by tracking the original message for each order
+            let placeholder_msg = InboundMsg {
+                kind: MsgKind::Submit,
+                submit: Some(Submit {
+                    order_id,
+                    account_id: 0,         // Placeholder
+                    side: Side::Buy,       // Placeholder
+                    typ: OrderType::Limit, // Placeholder
+                    price: None,
+                    qty: 0,     // Placeholder
+                    ts_norm: 0, // Placeholder
+                    meta: 0,    // Placeholder
+                }),
+                cancel: None,
+                enq_seq: 0, // Placeholder
+            };
+            rejections.push((placeholder_msg, reason));
+        }
+
+        // Step 6: Extract order IDs for accepted orders (after matching/rejection)
+        // Capture order data before any orders might be freed from the arena
+        let mut accepted_order_data = Vec::new();
         for handle in &orders_to_match {
             if self.arena.is_valid(*handle) {
                 let order = self.arena.get(*handle);
-                accepted_order_ids.push(order.id);
+                accepted_order_data.push((
+                    order.id,
+                    order.acct,
+                    order.side,
+                    order.price_idx,
+                    order.qty_open,
+                    order.typ,
+                ));
             }
         }
 
@@ -258,23 +325,9 @@ impl Whistle {
         self.emit_book_deltas(t);
 
         // Step 7: Emit lifecycle events (accepted/rejected orders)
-        self.emit_lifecycle_events(rejections, &accepted_order_ids, t);
+        self.emit_lifecycle_events(rejections, &accepted_order_data, t);
 
-        // Step 8: Emit lifecycle events for match rejections (only if there are any)
-        if !match_rejections.is_empty() {
-            for (order_id, reason) in match_rejections {
-                let lifecycle = EvLifecycle {
-                    symbol: self.cfg.symbol,
-                    tick: t,
-                    kind: LifecycleKind::Rejected,
-                    order_id,
-                    reason: Some(reason),
-                };
-                self.emitter
-                    .emit(EngineEvent::Lifecycle(lifecycle))
-                    .expect("Lifecycle event should always be valid");
-            }
-        }
+        // Step 8: Match rejections are now handled in Step 5 above
 
         // Check if there was any activity in this tick
         let events = self.emitter.take_events();
@@ -289,9 +342,14 @@ impl Whistle {
         }
 
         // Emit all events to the OutboundQueue (including TickComplete if there was activity)
-        let final_events = self.emitter.take_events();
+        let mut final_events = events; // Use the events we already took
+        if had_activity {
+            // Add the TickComplete event if we emitted one
+            let tick_complete_events = self.emitter.take_events();
+            final_events.extend(tick_complete_events);
+        }
         for event in final_events {
-            if self.outbound_queue.try_enqueue(event).is_err() {
+            if self.outbound_queue.try_enqueue(event.clone()).is_err() {
                 // This should not happen with Fatal policy as it would exit the process
                 // But we handle it gracefully for safety
                 eprintln!("Failed to enqueue event to OutboundQueue");
@@ -334,6 +392,108 @@ impl Whistle {
         levels
     }
 
+    /// Restore order book state from snapshot data
+    /// This is used during system recovery to restore the order book to a previous state
+    pub fn restore_order_book_state(
+        &mut self,
+        buy_orders: &std::collections::HashMap<u64, u64>,
+        sell_orders: &std::collections::HashMap<u64, u64>,
+        last_trade_price: Option<u64>,
+        last_trade_quantity: Option<u64>,
+        last_trade_timestamp: Option<chrono::DateTime<chrono::Utc>>,
+    ) {
+        tracing::info!(
+            "Restoring order book state: {} buy orders, {} sell orders",
+            buy_orders.len(),
+            sell_orders.len()
+        );
+
+        // Clear existing order book
+        self.book = Book::new(self.dom);
+        self.order_index = OrderIndex::with_capacity_pow2(self.cfg.arena_capacity as usize * 2);
+        self.arena = Arena::with_capacity(self.cfg.arena_capacity);
+
+        // Restore buy orders
+        for (&price, &qty) in buy_orders {
+            if let Some(price_idx) = self.dom.idx(price as u32) {
+                // Allocate a new order handle
+                if let Some(handle) = self.arena.alloc() {
+                    // Set up the order data
+                    let order = self.arena.get_mut(handle);
+                    order.id = 2; // Placeholder order ID (0 and 1 are reserved)
+                    order.acct = 0;
+                    order.side = Side::Buy;
+                    order.price_idx = price_idx;
+                    order.qty_open = qty as u32;
+                    order.ts_norm = 0;
+                    order.enq_seq = 0;
+                    order.typ = 0; // OrderType::Limit
+                    order.prev = H_NONE;
+                    order.next = H_NONE;
+
+                    // Add to order index and book
+                    let _ = self.order_index.insert(2, handle); // Use 2 as placeholder order ID (0 and 1 are reserved)
+                    self.book.insert_tail(
+                        &mut self.arena,
+                        Side::Buy,
+                        handle,
+                        price_idx,
+                        qty as u32,
+                    );
+
+                    tracing::debug!("Restored buy order: price={}, qty={}", price, qty);
+                }
+            }
+        }
+
+        // Restore sell orders
+        for (&price, &qty) in sell_orders {
+            if let Some(price_idx) = self.dom.idx(price as u32) {
+                // Allocate a new order handle
+                if let Some(handle) = self.arena.alloc() {
+                    // Set up the order data
+                    let order = self.arena.get_mut(handle);
+                    order.id = 2; // Placeholder order ID (0 and 1 are reserved)
+                    order.acct = 0;
+                    order.side = Side::Sell;
+                    order.price_idx = price_idx;
+                    order.qty_open = qty as u32;
+                    order.ts_norm = 0;
+                    order.enq_seq = 0;
+                    order.typ = 0; // OrderType::Limit
+                    order.prev = H_NONE;
+                    order.next = H_NONE;
+
+                    // Add to order index and book
+                    let _ = self.order_index.insert(2, handle); // Use 2 as placeholder order ID (0 and 1 are reserved)
+                    self.book.insert_tail(
+                        &mut self.arena,
+                        Side::Sell,
+                        handle,
+                        price_idx,
+                        qty as u32,
+                    );
+
+                    tracing::debug!("Restored sell order: price={}, qty={}", price, qty);
+                }
+            }
+        }
+
+        // Restore trade information
+        self.last_trade_price = last_trade_price;
+        self.last_trade_quantity = last_trade_quantity;
+        self.last_trade_timestamp = last_trade_timestamp;
+
+        tracing::info!("Order book state restored successfully");
+    }
+
+    /// Get the latest trade information
+    pub fn get_last_trade_info(
+        &self,
+    ) -> (Option<u64>, Option<u64>, Option<chrono::DateTime<chrono::Utc>>) {
+        (self.last_trade_price, self.last_trade_quantity, self.last_trade_timestamp)
+    }
+
     /// Process a single inbound message
     ///
     /// This handles the initial message processing pipeline:
@@ -354,6 +514,17 @@ impl Whistle {
                     // Check tick size alignment and price domain
                     if self.dom.idx(price).is_none() {
                         return Err(RejectReason::BadTick);
+                    }
+                }
+
+                // POST-ONLY cross prevention check
+                if submit.typ == OrderType::PostOnly {
+                    if let Some(price) = submit.price {
+                        if let Some(price_idx) = self.dom.idx(price) {
+                            if self.would_cross(submit.side, price_idx) {
+                                return Err(RejectReason::PostOnlyCross);
+                            }
+                        }
                     }
                 }
 
@@ -482,6 +653,11 @@ impl Whistle {
                                 .emit(EngineEvent::Trade(trade))
                                 .expect("Trade event should always be valid");
 
+                            // Update trade tracking
+                            self.last_trade_price = Some(trade.price as u64);
+                            self.last_trade_quantity = Some(trade.qty as u64);
+                            self.last_trade_timestamp = Some(chrono::Utc::now());
+
                             let maker_remaining = maker_qty - trade_qty;
 
                             if maker_remaining == 0 {
@@ -559,6 +735,11 @@ impl Whistle {
                         self.emitter
                             .emit(EngineEvent::Trade(trade))
                             .expect("Trade event should always be valid");
+
+                        // Update trade tracking
+                        self.last_trade_price = Some(trade.price as u64);
+                        self.last_trade_quantity = Some(trade.qty as u64);
+                        self.last_trade_timestamp = Some(chrono::Utc::now());
 
                         // Update the maker order
                         let maker_remaining = other_qty_open - trade_qty;
@@ -767,19 +948,27 @@ impl Whistle {
     fn emit_lifecycle_events(
         &mut self,
         rejections: Vec<(InboundMsg, RejectReason)>,
-        accepted_order_ids: &[OrderId],
+        accepted_order_data: &[(OrderId, u64, Side, u32, u32, u8)],
         tick: TickId,
     ) {
         // Emit rejection events
         for (msg, reason) in &rejections {
-            let order_id = match &msg.kind {
+            let (order_id, account_id, side, price, quantity, order_type) = match &msg.kind {
                 MsgKind::Submit => {
                     let submit = msg.submit.as_ref().unwrap();
-                    submit.order_id
+                    (
+                        submit.order_id,
+                        submit.account_id as u32, // Convert u64 to u32
+                        submit.side,
+                        submit.price,
+                        submit.qty,
+                        submit.typ as u8,
+                    )
                 }
                 MsgKind::Cancel => {
                     let cancel = msg.cancel.as_ref().unwrap();
-                    cancel.order_id
+                    // For cancel messages, we don't have full order data, so use defaults
+                    (cancel.order_id, 0, Side::Buy, None, 0, 0)
                 }
             };
 
@@ -789,6 +978,11 @@ impl Whistle {
                 kind: LifecycleKind::Rejected,
                 order_id,
                 reason: Some(*reason),
+                account_id,
+                side,
+                price,
+                quantity,
+                order_type,
             };
             self.emitter
                 .emit(EngineEvent::Lifecycle(lifecycle))
@@ -796,13 +990,22 @@ impl Whistle {
         }
 
         // Emit acceptance events for orders that were processed
-        for order_id in accepted_order_ids {
+        for (order_id, account_id, side, price_idx, quantity, order_type) in accepted_order_data {
+            // Use the captured order data instead of looking up in arena
+            let price = if *order_type == 1 { None } else { Some(self.dom.price(*price_idx)) };
+            let account_id = *account_id as u32; // Convert u64 to u32
+
             let lifecycle = EvLifecycle {
                 symbol: self.cfg.symbol,
                 tick,
                 kind: LifecycleKind::Accepted,
                 order_id: *order_id,
                 reason: None,
+                account_id,
+                side: *side,
+                price,
+                quantity: *quantity,
+                order_type: *order_type,
             };
             self.emitter
                 .emit(EngineEvent::Lifecycle(lifecycle))
