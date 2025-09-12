@@ -61,6 +61,13 @@ pub struct EvLifecycle {
     pub kind: LifecycleKind,
     pub order_id: OrderId,
     pub reason: Option<RejectReason>, // Some(reason) for Rejected, None for Accepted/Cancelled
+
+    // Full order data for WAL persistence
+    pub account_id: u32,
+    pub side: Side,
+    pub price: Option<Price>,
+    pub quantity: Qty,
+    pub order_type: u8, // OrderType as u8
 }
 
 /// Tick completion event - emitted at end of each tick

@@ -58,6 +58,9 @@ pub struct ExecutionManager {
     // Performance tracking (atomic for lock-free access)
     start_time: Instant,
     total_events_processed: AtomicU64,
+    total_orders: AtomicU64,
+    total_trades: AtomicU64,
+    total_volume: AtomicU64,
 }
 
 /// Information about an active symbol
@@ -91,6 +94,9 @@ impl ExecutionManager {
             shutdown_manager,
             start_time: Instant::now(),
             total_events_processed: AtomicU64::new(0),
+            total_orders: AtomicU64::new(0),
+            total_trades: AtomicU64::new(0),
+            total_volume: AtomicU64::new(0),
         }
     }
 
@@ -118,6 +124,9 @@ impl ExecutionManager {
             shutdown_manager,
             start_time: Instant::now(),
             total_events_processed: AtomicU64::new(0),
+            total_orders: AtomicU64::new(0),
+            total_trades: AtomicU64::new(0),
+            total_volume: AtomicU64::new(0),
         }
     }
 
@@ -137,6 +146,12 @@ impl ExecutionManager {
 
         self.metrics.symbols_active.set(self.active_symbols.len() as u64);
         self.metrics.symbols_registered_total.inc();
+
+        tracing::info!(
+            "ExecutionManager registered symbol {} (total active: {})",
+            symbol_id,
+            self.active_symbols.len()
+        );
     }
 
     /// Deregister a symbol from the ExecutionManager
@@ -170,9 +185,27 @@ impl ExecutionManager {
         // We need to drain the entire queue, not just a batch, to prevent OutboundQueue overflow
         // Use a very large number to drain all available events
         let events = queue.drain(usize::MAX);
+
         if events.is_empty() {
+            // Only log occasionally to avoid spam
+            if symbol_id == 889
+                && std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+                    % 10
+                    == 0
+            {
+                tracing::debug!("ExecutionManager: No events to process for symbol {}", symbol_id);
+            }
             return Ok(());
         }
+
+        tracing::info!(
+            "ExecutionManager processing {} events for symbol {}",
+            events.len(),
+            symbol_id
+        );
 
         let start_time = Instant::now();
         let mut processed_count = 0;
@@ -182,10 +215,33 @@ impl ExecutionManager {
             // Normalize the event
             let normalized = self.normalizer.normalize(event, &self.id_allocator)?;
 
+            // Update metrics based on event type
+            match &normalized {
+                DispatchEvent::OrderSubmitted(_) => {
+                    self.total_orders.fetch_add(1, Ordering::Relaxed);
+                    tracing::info!(
+                        "Incremented total_orders to {}",
+                        self.total_orders.load(Ordering::Relaxed)
+                    );
+                }
+                DispatchEvent::TradeEvent(trade) => {
+                    self.total_trades.fetch_add(1, Ordering::Relaxed);
+                    self.total_volume.fetch_add(trade.quantity as u64, Ordering::Relaxed);
+                    tracing::info!(
+                        "Incremented total_trades to {}, total_volume to {}",
+                        self.total_trades.load(Ordering::Relaxed),
+                        self.total_volume.load(Ordering::Relaxed)
+                    );
+                }
+                _ => {}
+            }
+
             // Write to WAL for persistence
             if let Err(e) = self.write_event_to_wal(&normalized, symbol_id) {
                 tracing::warn!("Failed to write event to WAL: {}", e);
                 // Continue processing even if WAL write fails
+            } else {
+                tracing::debug!("Successfully wrote event to WAL: {:?}", normalized);
             }
 
             // Update symbol tracking (lock-free)
@@ -273,6 +329,9 @@ impl ExecutionManager {
         ExecutionStats {
             active_symbols: self.active_symbols.len(),
             total_events_processed: self.total_events_processed.load(Ordering::Relaxed),
+            total_orders: self.total_orders.load(Ordering::Relaxed),
+            total_trades: self.total_trades.load(Ordering::Relaxed),
+            total_volume: self.total_volume.load(Ordering::Relaxed),
             uptime: self.start_time.elapsed(),
             queue_stats: self.dispatcher.get_queue_stats(),
             tick_stats: self.tick_tracker.get_stats(),
@@ -318,25 +377,44 @@ impl ExecutionManager {
                 timestamp: Utc::now(),
             },
             NormalizedEvent::TradeEvent(trade) => {
-                // TradeEvent doesn't have individual order IDs, so we'll use 0 for both
-                // This represents a market-level trade event
+                // Determine which order is buy and which is sell based on aggressor side
+                let (buy_order_id, sell_order_id) = match trade.aggressor_side {
+                    whistle::Side::Buy => (trade.taker_order_id, trade.maker_order_id),
+                    whistle::Side::Sell => (trade.maker_order_id, trade.taker_order_id),
+                };
+
                 WalOperation::Trade {
                     symbol_id,
-                    buy_order_id: 0,  // Market-level trade event
-                    sell_order_id: 0, // Market-level trade event
+                    buy_order_id,
+                    sell_order_id,
                     price: trade.price as u64,
                     quantity: trade.quantity as u64,
                     timestamp: Utc::now(),
                 }
             }
             NormalizedEvent::OrderSubmitted(submitted) => {
+                // Convert order type from u8 to string
+                let order_type_str = match submitted.order_type {
+                    0 => "limit",
+                    1 => "market",
+                    2 => "ioc",
+                    3 => "post_only",
+                    _ => "unknown",
+                };
+
+                // Convert side from enum to string
+                let side_str = match submitted.side {
+                    whistle::Side::Buy => "buy",
+                    whistle::Side::Sell => "sell",
+                };
+
                 WalOperation::SubmitOrder {
                     symbol_id,
-                    account_id: 0,                   // TODO: Get account_id from order
-                    side: "unknown".to_string(),     // TODO: Get side from order
-                    order_type: "limit".to_string(), // TODO: Get order type from order
-                    price: None,                     // TODO: Get price from order
-                    quantity: 0,                     // TODO: Get quantity from order
+                    account_id: submitted.account_id,
+                    side: side_str.to_string(),
+                    order_type: order_type_str.to_string(),
+                    price: submitted.price.map(|p| p as u64), // Convert u32 to u64
+                    quantity: submitted.quantity as u64,      // Convert u32 to u64
                     order_id: submitted.order_id,
                 }
             }
@@ -389,6 +467,9 @@ impl ExecutionManager {
 pub struct ExecutionStats {
     pub active_symbols: usize,
     pub total_events_processed: u64,
+    pub total_orders: u64,
+    pub total_trades: u64,
+    pub total_volume: u64,
     pub uptime: Duration,
     pub queue_stats: DispatchStats,
     pub tick_stats: TickBoundaryStats,

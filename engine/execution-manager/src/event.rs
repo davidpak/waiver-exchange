@@ -66,6 +66,10 @@ pub struct TradeEvent {
     pub wall_clock_timestamp: Instant,
     /// Globally unique execution ID
     pub execution_id: ExecutionId,
+    /// Maker order ID (the order that was on the book)
+    pub maker_order_id: OrderId,
+    /// Taker order ID (the order that crossed the spread)
+    pub taker_order_id: OrderId,
 }
 
 /// Order submission acknowledgment
@@ -79,6 +83,16 @@ pub struct OrderSubmitted {
     pub wall_clock_timestamp: Instant,
     /// Symbol ID
     pub symbol: u32,
+    /// Account ID
+    pub account_id: u32,
+    /// Order side (buy/sell)
+    pub side: Side,
+    /// Order price (None for market orders)
+    pub price: Option<Price>,
+    /// Order quantity
+    pub quantity: Qty,
+    /// Order type
+    pub order_type: u8,
 }
 
 /// Order cancellation acknowledgment
