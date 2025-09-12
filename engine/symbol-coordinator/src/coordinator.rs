@@ -3,6 +3,7 @@ use crate::placement::{EngineThreadPool, PlacementPolicy, RoundRobinPolicy};
 use crate::queue::QueueAllocator;
 use crate::registry::SymbolRegistry;
 use crate::types::{CoordError, CoordinatorConfig, ReadyAtTick, SymbolId};
+use execution_manager::ExecutionManager;
 use std::sync::{Arc, Mutex};
 use whistle::TickId;
 use whistle::{
@@ -24,6 +25,7 @@ struct SymbolCoordinatorInner {
     placement_policy: Box<dyn PlacementPolicy>,
     queue_allocator: QueueAllocator,
     current_tick: TickId,
+    execution_manager: Arc<ExecutionManager>,
 }
 
 // SAFETY: SymbolCoordinatorInner is safe to send and sync because:
@@ -33,7 +35,7 @@ unsafe impl Send for SymbolCoordinatorInner {}
 unsafe impl Sync for SymbolCoordinatorInner {}
 
 impl SymbolCoordinator {
-    pub fn new(config: CoordinatorConfig) -> Self {
+    pub fn new(config: CoordinatorConfig, execution_manager: Arc<ExecutionManager>) -> Self {
         let num_threads = config.num_threads;
         let spsc_depth = config.spsc_depth;
         let placement_policy = Box::new(RoundRobinPolicy::new(num_threads));
@@ -46,6 +48,7 @@ impl SymbolCoordinator {
             placement_policy,
             queue_allocator,
             current_tick: 0,
+            execution_manager,
         };
 
         Self { inner: Arc::new(Mutex::new(inner)) }
@@ -79,6 +82,15 @@ impl SymbolCoordinator {
     /// Get the current tick
     pub fn current_tick(&self) -> TickId {
         if let Ok(inner) = self.inner.lock() { inner.current_tick } else { 0 }
+    }
+
+    /// Get the current tick (returns Result for external API)
+    pub fn get_current_tick(&self) -> Result<TickId, CoordError> {
+        if let Ok(inner) = self.inner.lock() {
+            Ok(inner.current_tick)
+        } else {
+            Err(CoordError::Unknown)
+        }
     }
 
     /// Get configuration
@@ -186,6 +198,13 @@ impl SymbolCoordinatorApi for SymbolCoordinator {
                 .register_symbol(symbol_id, thread_id, spsc_queue)
                 .map_err(|_| CoordError::Unknown)?;
 
+            // Register symbol with ExecutionManager (per documentation: SymbolCoordinator registers symbols during engine boot)
+            inner.execution_manager.register_symbol(symbol_id);
+            tracing::info!(
+                "Registered symbol {} with ExecutionManager during engine boot",
+                symbol_id
+            );
+
             // Assign to thread pool
             inner.thread_pool.assign_symbol(thread_id).map_err(|_| CoordError::Unknown)?;
 
@@ -212,5 +231,92 @@ impl SymbolCoordinatorApi for SymbolCoordinator {
         // 1. Check if symbol is idle (no recent activity)
         // 2. If idle, mark for eviction
         // 3. Schedule cleanup at next tick boundary
+    }
+}
+
+impl SymbolCoordinator {
+    /// Get a list of all active symbol IDs (for SimulationClock integration)
+    pub fn get_active_symbol_ids(&self) -> Vec<u32> {
+        if let Ok(inner) = self.inner.lock() {
+            inner.registry.get_active_symbol_ids()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Process a symbol tick (for SimulationClock integration)
+    /// This method can be called concurrently and handles the mutable access internally
+    pub fn process_symbol_tick_concurrent(
+        &self,
+        symbol_id: u32,
+        tick: TickId,
+    ) -> Result<Vec<whistle::EngineEvent>, CoordError> {
+        if let Ok(mut inner) = self.inner.lock() {
+            // Update current tick
+            inner.current_tick = tick;
+            inner.registry.update_tick(tick);
+
+            // Process the specific symbol
+            if let Some(entry) = inner.registry.get_entry_mut(symbol_id) {
+                if entry.state == crate::types::SymbolState::Active {
+                    // Debug: Check inbound queue length before processing
+                    let inbound_queue_len = entry.whistle_handle.engine.queue_stats().0;
+                    if inbound_queue_len > 0 {
+                        tracing::info!(
+                            "Symbol {} has {} messages in inbound queue before processing tick {}",
+                            symbol_id,
+                            inbound_queue_len,
+                            tick
+                        );
+                    }
+
+                    // Call tick_with_queue_emission() on the Whistle engine
+                    // This emits events directly to the OutboundQueue instead of returning them
+                    entry.whistle_handle.engine.tick_with_queue_emission(tick);
+
+                    // Check if there are events in the outbound queue
+                    let queue_len = entry.whistle_handle.outbound_queue.len();
+                    if queue_len > 0 {
+                        tracing::info!(
+                            "Symbol {} processed {} events at tick {}",
+                            symbol_id,
+                            queue_len,
+                            tick
+                        );
+                    }
+
+                    // Return empty events since they're now in the OutboundQueue
+                    return Ok(Vec::new());
+                }
+            }
+
+            Err(CoordError::Unknown)
+        } else {
+            Err(CoordError::Unknown)
+        }
+    }
+
+    /// Update the current tick (called by SimulationClock)
+    pub fn update_current_tick(&self, tick: TickId) {
+        if let Ok(mut inner) = self.inner.lock() {
+            inner.current_tick = tick;
+            inner.registry.update_tick(tick);
+        }
+    }
+
+    /// Get the OutboundQueue for a symbol (for ExecutionManager integration)
+    pub fn get_outbound_queue(
+        &self,
+        symbol_id: SymbolId,
+    ) -> Result<std::sync::Arc<whistle::OutboundQueue>, CoordError> {
+        if let Ok(inner) = self.inner.lock() {
+            if let Some(entry) = inner.registry.get_entry(symbol_id) {
+                Ok(entry.whistle_handle.outbound_queue.clone())
+            } else {
+                Err(CoordError::Unknown)
+            }
+        } else {
+            Err(CoordError::Unknown)
+        }
     }
 }

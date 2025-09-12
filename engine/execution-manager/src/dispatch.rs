@@ -37,7 +37,7 @@ impl EventDispatcher {
         self.analytics_sender = Some(sender);
     }
 
-    pub fn dispatch(&mut self, event: DispatchEvent) -> Result<(), String> {
+    pub fn dispatch(&self, event: DispatchEvent) -> Result<(), String> {
         // Update metrics
         self.metrics.events_processed_total.inc();
 
@@ -56,7 +56,7 @@ impl EventDispatcher {
         Ok(())
     }
 
-    pub fn dispatch_tick_boundary(&mut self, event: DispatchEvent) -> Result<(), String> {
+    pub fn dispatch_tick_boundary(&self, event: DispatchEvent) -> Result<(), String> {
         // Update metrics
         self.metrics.ticks_flushed_total.inc();
 

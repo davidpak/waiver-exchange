@@ -2,45 +2,47 @@
 
 use crate::config::TickTrackingConfig;
 use crate::event::DispatchEvent;
-use std::collections::HashMap;
+use dashmap::{DashMap, DashSet};
+use std::sync::atomic::{AtomicU64, Ordering};
 use whistle::TickId;
 
 /// Tick tracker for coordinating multi-symbol tick completion
 pub struct TickTracker {
     #[allow(dead_code)]
     config: TickTrackingConfig,
-    registered_symbols: std::collections::HashSet<u32>,
-    symbol_tick_progress: HashMap<u32, TickId>,
-    current_tick: Option<TickId>,
+    registered_symbols: DashSet<u32>,
+    symbol_tick_progress: DashMap<u32, TickId>,
+    current_tick: AtomicU64, // Using AtomicU64 with Option encoding
 }
 
 impl TickTracker {
     pub fn new(config: TickTrackingConfig) -> Self {
         Self {
             config,
-            registered_symbols: std::collections::HashSet::new(),
-            symbol_tick_progress: HashMap::new(),
-            current_tick: None,
+            registered_symbols: DashSet::new(),
+            symbol_tick_progress: DashMap::new(),
+            current_tick: AtomicU64::new(0), // 0 means None
         }
     }
 
-    pub fn register_symbol(&mut self, symbol_id: u32) {
+    pub fn register_symbol(&self, symbol_id: u32) {
         self.registered_symbols.insert(symbol_id);
     }
 
-    pub fn deregister_symbol(&mut self, symbol_id: u32) {
+    pub fn deregister_symbol(&self, symbol_id: u32) {
         self.registered_symbols.remove(&symbol_id);
         self.symbol_tick_progress.remove(&symbol_id);
     }
 
-    pub fn process_event(&mut self, event: &DispatchEvent) -> Result<(), String> {
+    pub fn process_event(&self, event: &DispatchEvent) -> Result<(), String> {
         if let Some(tick) = event.logical_timestamp() {
             if let Some(symbol) = event.symbol() {
                 self.symbol_tick_progress.insert(symbol, tick);
 
-                // Update current tick if this is newer
-                if self.current_tick.is_none_or(|current| tick > current) {
-                    self.current_tick = Some(tick);
+                // Update current tick if this is newer (lock-free)
+                let current = self.current_tick.load(Ordering::Relaxed);
+                if current == 0 || tick > current {
+                    self.current_tick.store(tick, Ordering::Relaxed);
                 }
             }
         }
@@ -49,9 +51,10 @@ impl TickTracker {
 
     pub fn is_tick_ready(&self, tick_id: TickId) -> bool {
         // Check if all registered symbols have completed this tick
-        for &symbol in &self.registered_symbols {
-            if let Some(&completed_tick) = self.symbol_tick_progress.get(&symbol) {
-                if completed_tick < tick_id {
+        for symbol_ref in self.registered_symbols.iter() {
+            let symbol = *symbol_ref.key();
+            if let Some(completed_tick) = self.symbol_tick_progress.get(&symbol) {
+                if *completed_tick < tick_id {
                     return false;
                 }
             } else {
@@ -62,23 +65,29 @@ impl TickTracker {
     }
 
     pub fn get_current_tick(&self) -> Option<TickId> {
-        self.current_tick
+        let current = self.current_tick.load(Ordering::Relaxed);
+        if current == 0 {
+            None
+        } else {
+            Some(current)
+        }
     }
 
     pub fn get_stats(&self) -> TickBoundaryStats {
         TickBoundaryStats {
             registered_symbols: self.registered_symbols.len(),
-            current_tick: self.current_tick,
+            current_tick: self.get_current_tick(),
             symbols_behind: self.count_symbols_behind(),
         }
     }
 
     fn count_symbols_behind(&self) -> usize {
-        if let Some(current_tick) = self.current_tick {
+        if let Some(current_tick) = self.get_current_tick() {
             self.registered_symbols
                 .iter()
-                .filter(|&&symbol| {
-                    self.symbol_tick_progress.get(&symbol).is_none_or(|&tick| tick < current_tick)
+                .filter(|symbol_ref| {
+                    let symbol = *symbol_ref.key();
+                    self.symbol_tick_progress.get(&symbol).is_none_or(|tick| *tick < current_tick)
                 })
                 .count()
         } else {
@@ -109,7 +118,7 @@ mod tests {
 
     #[test]
     fn test_symbol_registration() {
-        let mut tracker = create_test_tracker();
+        let tracker = create_test_tracker();
 
         tracker.register_symbol(1);
         tracker.register_symbol(2);
@@ -124,7 +133,7 @@ mod tests {
 
     #[test]
     fn test_tick_progress_tracking() {
-        let mut tracker = create_test_tracker();
+        let tracker = create_test_tracker();
 
         tracker.register_symbol(1);
         tracker.register_symbol(2);
@@ -168,7 +177,7 @@ mod tests {
 
     #[test]
     fn test_tick_readiness() {
-        let mut tracker = create_test_tracker();
+        let tracker = create_test_tracker();
 
         tracker.register_symbol(1);
         tracker.register_symbol(2);

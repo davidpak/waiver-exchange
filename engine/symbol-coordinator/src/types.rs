@@ -53,7 +53,12 @@ pub struct WhistleHandle {
     pub metadata: EngineMetadata,
     pub tick_flag: AtomicBool,
     pub engine: whistle::Whistle, // Direct access for SimulationClock - no locks
+    pub outbound_queue: Arc<whistle::OutboundQueue>, // For ExecutionManager integration
 }
+
+// TODO: Implement proper Clone for WhistleHandle
+// This requires Whistle to implement Clone, which may not be feasible
+// For now, we'll use a different approach in SimulationClock
 
 /// Write handle for OrderRouter to enqueue orders
 /// Lock-free SPSC queue access - NO LOCKS ON HOT PATH

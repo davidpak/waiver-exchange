@@ -24,23 +24,33 @@ impl SymbolEntry {
             created_at: current_tick,
         };
 
+        let outbound_queue = std::sync::Arc::new(whistle::OutboundQueue::new(
+            65536,
+            whistle::BackpressurePolicy::Fatal,
+        ));
+        let engine_cfg = whistle::EngineCfg {
+            symbol: symbol_id,
+            price_domain: whistle::PriceDomain { floor: 100, ceil: 10000, tick: 1 },
+            bands: whistle::Bands { mode: whistle::BandMode::Percent(10) },
+            batch_max: 100,
+            arena_capacity: 1024,
+            elastic_arena: false,
+            exec_shift_bits: 16,
+            exec_id_mode: whistle::ExecIdMode::Sharded,
+            self_match_policy: whistle::SelfMatchPolicy::Skip,
+            allow_market_cold_start: false,
+            reference_price_source: whistle::ReferencePriceSource::MidpointOnWarm,
+        };
+
+        // Create shared queue reference for both OrderQueueWriter and Whistle engine
+        let shared_queue = std::sync::Arc::new(spsc_queue);
+
         let whistle_handle = WhistleHandle {
-            order_tx: crate::types::OrderQueueWriter::new(spsc_queue),
+            order_tx: crate::types::OrderQueueWriter { queue: shared_queue.clone() },
             metadata,
             tick_flag: std::sync::atomic::AtomicBool::new(false),
-            engine: whistle::Whistle::new(whistle::EngineCfg {
-                symbol: symbol_id,
-                price_domain: whistle::PriceDomain { floor: 100, ceil: 10000, tick: 1 },
-                bands: whistle::Bands { mode: whistle::BandMode::Percent(10) },
-                batch_max: 100,
-                arena_capacity: 1024,
-                elastic_arena: false,
-                exec_shift_bits: 16,
-                exec_id_mode: whistle::ExecIdMode::Sharded,
-                self_match_policy: whistle::SelfMatchPolicy::Skip,
-                allow_market_cold_start: false,
-                reference_price_source: whistle::ReferencePriceSource::MidpointOnWarm,
-            }),
+            engine: whistle::Whistle::new_with_inbound_queue(engine_cfg, shared_queue.clone()),
+            outbound_queue,
         };
 
         Self { symbol_id, state: SymbolState::Registered, whistle_handle, thread_id }
@@ -137,6 +147,20 @@ impl SymbolRegistry {
             .filter(|(_, entry)| entry.state == SymbolState::Active)
             .map(|(symbol_id, _)| *symbol_id)
             .collect()
+    }
+
+    /// Get active symbol IDs (alias for get_active_symbols for compatibility)
+    pub fn get_active_symbol_ids(&self) -> Vec<SymbolId> {
+        self.get_active_symbols()
+    }
+
+    /// Get a reference to WhistleHandle for a symbol (for SimulationClock integration)
+    /// Note: This returns a reference, not a clone, due to WhistleHandle not implementing Clone
+    pub fn get_whistle_handle_ref(&self, symbol_id: SymbolId) -> Option<&WhistleHandle> {
+        self.entries
+            .get(&symbol_id)
+            .filter(|entry| entry.state == SymbolState::Active)
+            .map(|entry| &entry.whistle_handle)
     }
 
     pub fn update_tick(&mut self, new_tick: TickId) {

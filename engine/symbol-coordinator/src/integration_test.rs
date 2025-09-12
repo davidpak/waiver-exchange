@@ -2,11 +2,17 @@
 // These tests demonstrate real functionality with multiple symbols and order processing
 
 use crate::{CoordinatorConfig, SymbolCoordinator, SymbolCoordinatorApi};
+use execution_manager::ExecutionManager;
 use order_router::{
     InboundMsgWithSymbol, OrderRouter, RouterConfig,
     SymbolCoordinatorApi as OrderRouterCoordinatorApi,
 };
+use std::sync::Arc;
 use whistle::{InboundMsg, OrderType, Side};
+
+fn create_test_execution_manager() -> Arc<ExecutionManager> {
+    Arc::new(ExecutionManager::new(execution_manager::ExecManagerConfig::default()))
+}
 
 /// Integration test that verifies the real flow from OrderRouter through SymbolCoordinator to Whistle
 #[test]
@@ -17,7 +23,8 @@ fn test_real_order_processing_pipeline() {
         spsc_depth: 64, // Small queue for testing
         max_symbols_per_thread: 4,
     };
-    let coordinator = SymbolCoordinator::new(coord_config);
+    let execution_manager = create_test_execution_manager();
+    let coordinator = SymbolCoordinator::new(coord_config, execution_manager);
 
     // Create OrderRouter
     let router_config = RouterConfig { spsc_depth_default: 64, ..Default::default() };
@@ -186,7 +193,8 @@ fn test_whistle_engine_integration() {
     // Create coordinator
     let coord_config =
         CoordinatorConfig { num_threads: 1, spsc_depth: 32, max_symbols_per_thread: 2 };
-    let coordinator = SymbolCoordinator::new(coord_config);
+    let execution_manager = create_test_execution_manager();
+    let coordinator = SymbolCoordinator::new(coord_config, execution_manager);
 
     // Test symbol activation and Whistle engine creation
     let symbol_id = 1;
@@ -234,7 +242,8 @@ fn test_error_handling_and_edge_cases() {
         spsc_depth: 2, // Very small queue
         max_symbols_per_thread: 1,
     };
-    let coordinator = SymbolCoordinator::new(coord_config);
+    let execution_manager = create_test_execution_manager();
+    let coordinator = SymbolCoordinator::new(coord_config, execution_manager);
 
     // Test 1: Activate symbol
     let symbol_id = 1;
@@ -320,7 +329,8 @@ fn test_complete_end_to_end_flow() {
     // Create the complete system
     let coord_config =
         CoordinatorConfig { num_threads: 2, spsc_depth: 128, max_symbols_per_thread: 4 };
-    let coordinator = SymbolCoordinator::new(coord_config);
+    let execution_manager = create_test_execution_manager();
+    let coordinator = SymbolCoordinator::new(coord_config, execution_manager);
 
     let mut router = OrderRouter::new(RouterConfig::default());
     let coordinator_box = Box::new(CoordinatorAdapter { coordinator });

@@ -14,6 +14,8 @@ pub enum DispatchEvent {
     ExecutionReport(ExecutionReport),
     /// Market-level trade tick
     TradeEvent(TradeEvent),
+    /// Order submission acknowledgment
+    OrderSubmitted(OrderSubmitted),
     /// Order cancellation acknowledgment
     OrderCancelled(OrderCancelled),
     /// Order book depth updates
@@ -64,6 +66,19 @@ pub struct TradeEvent {
     pub wall_clock_timestamp: Instant,
     /// Globally unique execution ID
     pub execution_id: ExecutionId,
+}
+
+/// Order submission acknowledgment
+#[derive(Debug, Clone)]
+pub struct OrderSubmitted {
+    /// Order ID that was submitted
+    pub order_id: OrderId,
+    /// Logical timestamp (tick)
+    pub logical_timestamp: TickId,
+    /// Wall-clock timestamp
+    pub wall_clock_timestamp: Instant,
+    /// Symbol ID
+    pub symbol: u32,
 }
 
 /// Order cancellation acknowledgment
@@ -149,6 +164,7 @@ impl DispatchEvent {
         match self {
             DispatchEvent::ExecutionReport(ev) => Some(ev.symbol),
             DispatchEvent::TradeEvent(ev) => Some(ev.symbol),
+            DispatchEvent::OrderSubmitted(ev) => Some(ev.symbol),
             DispatchEvent::OrderCancelled(ev) => Some(ev.symbol),
             DispatchEvent::BookDelta(ev) => Some(ev.symbol),
             DispatchEvent::TickBoundary(_ev) => None, // Tick boundary applies to all symbols
@@ -161,6 +177,7 @@ impl DispatchEvent {
         match self {
             DispatchEvent::ExecutionReport(ev) => Some(ev.logical_timestamp),
             DispatchEvent::TradeEvent(ev) => Some(ev.logical_timestamp),
+            DispatchEvent::OrderSubmitted(ev) => Some(ev.logical_timestamp),
             DispatchEvent::OrderCancelled(ev) => Some(ev.logical_timestamp),
             DispatchEvent::BookDelta(ev) => Some(ev.logical_timestamp),
             DispatchEvent::TickBoundary(ev) => Some(ev.tick),
@@ -173,6 +190,7 @@ impl DispatchEvent {
         match self {
             DispatchEvent::ExecutionReport(ev) => ev.wall_clock_timestamp,
             DispatchEvent::TradeEvent(ev) => ev.wall_clock_timestamp,
+            DispatchEvent::OrderSubmitted(ev) => ev.wall_clock_timestamp,
             DispatchEvent::OrderCancelled(ev) => ev.wall_clock_timestamp,
             DispatchEvent::BookDelta(ev) => ev.wall_clock_timestamp,
             DispatchEvent::TickBoundary(ev) => ev.timestamp,

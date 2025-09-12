@@ -25,7 +25,9 @@ pub use normalization::{EventNormalizer, NormalizedEvent};
 pub use shutdown::ShutdownManager;
 pub use tick_tracker::{TickBoundaryStats, TickTracker};
 
-use std::collections::HashMap;
+use dashmap::DashMap;
+use persistence::{PersistenceBackend, WalOperation};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use whistle::{OutboundQueue, TickId};
@@ -36,6 +38,7 @@ use whistle::{OutboundQueue, TickId};
 /// It ensures that all trade executions, order state changes, and system-level outputs
 /// are captured, formatted, and dispatched deterministically.
 pub struct ExecutionManager {
+    #[allow(dead_code)]
     config: ExecManagerConfig,
     metrics: Arc<MetricsCollector>,
 
@@ -45,13 +48,16 @@ pub struct ExecutionManager {
     dispatcher: EventDispatcher,
     tick_tracker: TickTracker,
 
-    // State tracking
-    active_symbols: HashMap<u32, SymbolInfo>,
+    // Persistence integration
+    persistence: Arc<dyn PersistenceBackend>,
+
+    // State tracking (lock-free for hot path compatibility)
+    active_symbols: DashMap<u32, SymbolInfo>,
     shutdown_manager: ShutdownManager,
 
-    // Performance tracking
+    // Performance tracking (atomic for lock-free access)
     start_time: Instant,
-    total_events_processed: u64,
+    total_events_processed: AtomicU64,
 }
 
 /// Information about an active symbol
@@ -80,17 +86,45 @@ impl ExecutionManager {
             normalizer,
             dispatcher,
             tick_tracker,
-            active_symbols: HashMap::new(),
+            persistence: Arc::new(persistence::InMemoryPersistence::with_default_config()),
+            active_symbols: DashMap::new(),
             shutdown_manager,
             start_time: Instant::now(),
-            total_events_processed: 0,
+            total_events_processed: AtomicU64::new(0),
+        }
+    }
+
+    /// Create a new ExecutionManager with persistence integration
+    pub fn new_with_persistence(
+        config: ExecManagerConfig,
+        persistence: Arc<dyn PersistenceBackend>,
+    ) -> Self {
+        let metrics = Arc::new(MetricsCollector::new());
+        let id_allocator = ExecutionIdAllocator::new(config.execution_id_config.clone());
+        let normalizer = EventNormalizer::new(config.normalization_config.clone());
+        let dispatcher = EventDispatcher::new(config.fanout_config.clone(), metrics.clone());
+        let tick_tracker = TickTracker::new(config.tick_tracking_config.clone());
+        let shutdown_manager = ShutdownManager::new(config.shutdown_config.clone());
+
+        Self {
+            config,
+            metrics,
+            id_allocator,
+            normalizer,
+            dispatcher,
+            tick_tracker,
+            persistence,
+            active_symbols: DashMap::new(),
+            shutdown_manager,
+            start_time: Instant::now(),
+            total_events_processed: AtomicU64::new(0),
         }
     }
 
     /// Register a symbol with the ExecutionManager
     ///
     /// This must be called before any events for the symbol are processed.
-    pub fn register_symbol(&mut self, symbol_id: u32) {
+    pub fn register_symbol(&self, symbol_id: u32) {
         let symbol_info = SymbolInfo {
             symbol_id,
             registered_at: Instant::now(),
@@ -108,7 +142,7 @@ impl ExecutionManager {
     /// Deregister a symbol from the ExecutionManager
     ///
     /// This should be called when a Whistle engine is shut down.
-    pub fn deregister_symbol(&mut self, symbol_id: u32) {
+    pub fn deregister_symbol(&self, symbol_id: u32) {
         self.active_symbols.remove(&symbol_id);
         self.tick_tracker.deregister_symbol(symbol_id);
 
@@ -120,8 +154,10 @@ impl ExecutionManager {
     ///
     /// This is the main ingestion method that consumes events from Whistle
     /// and processes them through the normalization and dispatch pipeline.
+    ///
+    /// This method is designed to work with Arc<ExecutionManager> for hot path compatibility.
     pub fn process_events(
-        &mut self,
+        &self,
         symbol_id: u32,
         queue: &OutboundQueue,
     ) -> Result<(), ExecutionError> {
@@ -130,8 +166,10 @@ impl ExecutionManager {
             return Err(ExecutionError::UnregisteredSymbol(symbol_id));
         }
 
-        // Drain events from the queue
-        let events = queue.drain(self.config.batch_size);
+        // Drain ALL events from the queue to prevent overflow
+        // We need to drain the entire queue, not just a batch, to prevent OutboundQueue overflow
+        // Use a very large number to drain all available events
+        let events = queue.drain(usize::MAX);
         if events.is_empty() {
             return Ok(());
         }
@@ -142,10 +180,16 @@ impl ExecutionManager {
         // Process each event through the pipeline
         for event in events {
             // Normalize the event
-            let normalized = self.normalizer.normalize(event, &mut self.id_allocator)?;
+            let normalized = self.normalizer.normalize(event, &self.id_allocator)?;
 
-            // Update symbol tracking
-            if let Some(symbol_info) = self.active_symbols.get_mut(&symbol_id) {
+            // Write to WAL for persistence
+            if let Err(e) = self.write_event_to_wal(&normalized, symbol_id) {
+                tracing::warn!("Failed to write event to WAL: {}", e);
+                // Continue processing even if WAL write fails
+            }
+
+            // Update symbol tracking (lock-free)
+            if let Some(mut symbol_info) = self.active_symbols.get_mut(&symbol_id) {
                 if let Some(tick) = normalized.logical_timestamp() {
                     symbol_info.last_tick_seen = Some(tick);
                 }
@@ -163,11 +207,11 @@ impl ExecutionManager {
             processed_count += 1;
         }
 
-        // Update metrics
+        // Update metrics (lock-free)
         let processing_time = start_time.elapsed();
         self.metrics.events_processed_total.add(processed_count);
         self.metrics.processing_latency.record(processing_time.as_nanos() as u64);
-        self.total_events_processed += processed_count;
+        self.total_events_processed.fetch_add(processed_count, Ordering::Relaxed);
 
         Ok(())
     }
@@ -192,9 +236,9 @@ impl ExecutionManager {
         // Create tick boundary event
         let tick_boundary = TickBoundaryEvent {
             tick: tick_id,
-            flushed_symbols: self.active_symbols.keys().cloned().collect(),
+            flushed_symbols: self.active_symbols.iter().map(|entry| *entry.key()).collect(),
             timestamp: start_time,
-            events_processed: self.total_events_processed,
+            events_processed: self.total_events_processed.load(Ordering::Relaxed),
         };
 
         // Dispatch tick boundary event
@@ -228,7 +272,7 @@ impl ExecutionManager {
     pub fn get_stats(&self) -> ExecutionStats {
         ExecutionStats {
             active_symbols: self.active_symbols.len(),
-            total_events_processed: self.total_events_processed,
+            total_events_processed: self.total_events_processed.load(Ordering::Relaxed),
             uptime: self.start_time.elapsed(),
             queue_stats: self.dispatcher.get_queue_stats(),
             tick_stats: self.tick_tracker.get_stats(),
@@ -251,6 +295,90 @@ impl ExecutionManager {
 
         // Shutdown dispatcher
         self.dispatcher.shutdown().map_err(ExecutionError::ShutdownFailed)?;
+
+        Ok(())
+    }
+
+    /// Write a normalized event to WAL for persistence
+    fn write_event_to_wal(
+        &self,
+        event: &NormalizedEvent,
+        symbol_id: u32,
+    ) -> Result<(), ExecutionError> {
+        use chrono::Utc;
+
+        // Convert NormalizedEvent to WalOperation
+        let wal_operation = match event {
+            NormalizedEvent::ExecutionReport(report) => WalOperation::Trade {
+                symbol_id,
+                buy_order_id: if report.side == whistle::Side::Buy { report.order_id } else { 0 },
+                sell_order_id: if report.side == whistle::Side::Sell { report.order_id } else { 0 },
+                price: report.price as u64,
+                quantity: report.quantity as u64,
+                timestamp: Utc::now(),
+            },
+            NormalizedEvent::TradeEvent(trade) => {
+                // TradeEvent doesn't have individual order IDs, so we'll use 0 for both
+                // This represents a market-level trade event
+                WalOperation::Trade {
+                    symbol_id,
+                    buy_order_id: 0,  // Market-level trade event
+                    sell_order_id: 0, // Market-level trade event
+                    price: trade.price as u64,
+                    quantity: trade.quantity as u64,
+                    timestamp: Utc::now(),
+                }
+            }
+            NormalizedEvent::OrderSubmitted(submitted) => {
+                WalOperation::SubmitOrder {
+                    symbol_id,
+                    account_id: 0,                   // TODO: Get account_id from order
+                    side: "unknown".to_string(),     // TODO: Get side from order
+                    order_type: "limit".to_string(), // TODO: Get order type from order
+                    price: None,                     // TODO: Get price from order
+                    quantity: 0,                     // TODO: Get quantity from order
+                    order_id: submitted.order_id,
+                }
+            }
+            NormalizedEvent::OrderCancelled(cancelled) => {
+                WalOperation::CancelOrder {
+                    symbol_id,
+                    order_id: cancelled.order_id,
+                    account_id: 0, // TODO: Get account_id from order
+                }
+            }
+            NormalizedEvent::BookDelta(_delta) => {
+                // BookDelta represents order book state changes
+                // We'll log this as a checkpoint to track order book evolution
+                WalOperation::Checkpoint {
+                    tick: event.logical_timestamp().unwrap_or(0),
+                    timestamp: Utc::now(),
+                }
+            }
+            NormalizedEvent::TickBoundary(boundary) => {
+                WalOperation::Checkpoint { tick: boundary.tick, timestamp: Utc::now() }
+            }
+            NormalizedEvent::SystemLog(_log) => {
+                // System logs are important for debugging and audit trails
+                WalOperation::Checkpoint {
+                    tick: event.logical_timestamp().unwrap_or(0),
+                    timestamp: Utc::now(),
+                }
+            }
+        };
+
+        // Write to WAL (this is async, but we're in a sync context)
+        // We'll need to handle this properly with a runtime or make the method async
+        // For now, we'll use a blocking approach
+        let persistence = self.persistence.clone();
+        let operation = wal_operation.clone();
+
+        // Use tokio::task::block_in_place for async operations in sync context
+        tokio::task::block_in_place(|| {
+            tokio::runtime::Handle::current()
+                .block_on(async { persistence.write_wal_entry(operation).await })
+        })
+        .map_err(|e| ExecutionError::PersistenceFailed(e.to_string()))?;
 
         Ok(())
     }
@@ -286,6 +414,9 @@ pub enum ExecutionError {
 
     #[error("Shutdown failed: {0}")]
     ShutdownFailed(String),
+
+    #[error("Persistence failed: {0}")]
+    PersistenceFailed(String),
 }
 
 impl From<String> for ExecutionError {
@@ -316,13 +447,13 @@ mod tests {
         let manager = ExecutionManager::new(config);
 
         assert_eq!(manager.active_symbols.len(), 0);
-        assert_eq!(manager.total_events_processed, 0);
+        assert_eq!(manager.total_events_processed.load(Ordering::Relaxed), 0);
     }
 
     #[test]
     fn test_symbol_registration() {
         let config = create_test_config();
-        let mut manager = ExecutionManager::new(config);
+        let manager = ExecutionManager::new(config);
 
         manager.register_symbol(1);
         assert_eq!(manager.active_symbols.len(), 1);
@@ -339,7 +470,7 @@ mod tests {
     #[test]
     fn test_unregistered_symbol_error() {
         let config = create_test_config();
-        let mut manager = ExecutionManager::new(config);
+        let manager = ExecutionManager::new(config);
 
         // Create a mock queue (we'll need to implement this properly)
         // For now, this test verifies the error handling logic

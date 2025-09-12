@@ -152,6 +152,33 @@ impl InboundQueue {
         }
     }
 
+    /// Lock-free dequeue operation (does not require mutable access)
+    ///
+    /// This is the same as try_dequeue but doesn't require &mut self,
+    /// making it suitable for shared access in SPSC scenarios.
+    #[inline]
+    pub fn try_dequeue_lockfree(&self) -> Option<InboundMsg> {
+        let head = self.head.load(std::sync::atomic::Ordering::Acquire);
+        let tail = self.tail.load(std::sync::atomic::Ordering::Acquire);
+
+        if head == tail {
+            return None;
+        }
+
+        match self.head.compare_exchange_weak(
+            head,
+            (head + 1) & self.mask,
+            std::sync::atomic::Ordering::AcqRel,
+            std::sync::atomic::Ordering::Acquire,
+        ) {
+            Ok(_) => unsafe {
+                let slot = self.buffer.get_unchecked(head);
+                (*slot.get()).take()
+            },
+            Err(_) => None,
+        }
+    }
+
     /// Drain up to `max_messages` from the queue
     ///
     /// This is the main consumer operation used during tick processing.
@@ -174,6 +201,33 @@ impl InboundQueue {
     /// This is useful for testing and error recovery scenarios.
     pub fn clear(&mut self) {
         while self.try_dequeue().is_some() {
+            // Drain all messages
+        }
+    }
+
+    /// Lock-free drain operation (does not require mutable access)
+    ///
+    /// This is the same as drain but doesn't require &mut self,
+    /// making it suitable for shared access in SPSC scenarios.
+    pub fn drain_lockfree(&self, max_messages: usize) -> Vec<InboundMsg> {
+        let mut messages = Vec::with_capacity(max_messages.min(self.len()));
+
+        for _ in 0..max_messages {
+            match self.try_dequeue_lockfree() {
+                Some(msg) => messages.push(msg),
+                None => break, // Queue is empty
+            }
+        }
+
+        messages
+    }
+
+    /// Lock-free clear operation (does not require mutable access)
+    ///
+    /// This is the same as clear but doesn't require &mut self,
+    /// making it suitable for shared access in SPSC scenarios.
+    pub fn clear_lockfree(&self) {
+        while self.try_dequeue_lockfree().is_some() {
             // Drain all messages
         }
     }

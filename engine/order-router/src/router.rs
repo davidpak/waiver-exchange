@@ -103,6 +103,12 @@ impl OrderRouter {
         tick_now: TickId,
         msg: InboundMsgWithSymbol,
     ) -> Result<(), RouterError> {
+        tracing::info!(
+            "OrderRouter routing message for symbol {} at tick {}",
+            msg.symbol_id,
+            tick_now
+        );
+
         // Update current tick if needed
         if tick_now != self.current_tick {
             self.on_tick_boundary(tick_now);
@@ -146,10 +152,18 @@ impl OrderRouter {
         match queue.try_enqueue_lockfree(enriched_msg) {
             Ok(()) => {
                 self.metrics.enqueued += 1;
+                tracing::info!(
+                    "OrderRouter successfully enqueued message for symbol {} to Whistle engine",
+                    symbol_id
+                );
                 Ok(())
             }
             Err(_) => {
                 self.metrics.rejected_backpressure += 1;
+                tracing::warn!(
+                    "OrderRouter failed to enqueue message for symbol {} due to backpressure",
+                    symbol_id
+                );
                 Err(RouterError::Backpressure)
             }
         }
@@ -186,6 +200,7 @@ impl OrderRouter {
 
         // Use real SymbolCoordinator if available
         if let Some(coordinator) = &self.coordinator {
+            tracing::info!("OrderRouter using real SymbolCoordinator for symbol {}", symbol_id);
             match coordinator.ensure_active(symbol_id) {
                 Ok(ready_at) => {
                     // Use the real queue from SymbolCoordinator
@@ -193,12 +208,24 @@ impl OrderRouter {
                     state.is_active = true;
                     state.activation_requested = false;
                     self.metrics.active_symbols += 1;
+                    tracing::info!(
+                        "OrderRouter successfully activated symbol {} with real queue",
+                        symbol_id
+                    );
                     Ok(())
                 }
-                Err(_) => Err(RouterError::SymbolCapacity),
+                Err(e) => {
+                    tracing::warn!(
+                        "OrderRouter failed to activate symbol {} via SymbolCoordinator: {:?}",
+                        symbol_id,
+                        e
+                    );
+                    Err(RouterError::SymbolCapacity)
+                }
             }
         } else {
             // Fallback to placeholder implementation
+            tracing::warn!("OrderRouter using FALLBACK placeholder implementation for symbol {} - NO REAL QUEUE CONNECTION!", symbol_id);
             let queue = Arc::new(InboundQueue::new(self.config.spsc_depth_default));
             state.queue = Some(queue);
             state.is_active = true;

@@ -1,8 +1,14 @@
 use crate::{OrderRouter, RouterConfig, RouterError, SymbolCoordinatorApi};
+use execution_manager::ExecutionManager;
+use std::sync::Arc;
 use symbol_coordinator::{
     CoordinatorConfig, SymbolCoordinator, SymbolCoordinatorApi as SymbolCoordinatorApiLocal,
 };
 use whistle::{InboundMsg, OrderType, Side};
+
+fn create_test_execution_manager() -> Arc<ExecutionManager> {
+    Arc::new(ExecutionManager::new(execution_manager::ExecManagerConfig::default()))
+}
 
 /// Integration test that verifies OrderRouter working with real SymbolCoordinator
 #[test]
@@ -12,7 +18,8 @@ fn test_order_router_symbol_coordinator_integration() {
     // Create SymbolCoordinator
     let coord_config =
         CoordinatorConfig { num_threads: 2, spsc_depth: 64, max_symbols_per_thread: 4 };
-    let coordinator = SymbolCoordinator::new(coord_config);
+    let execution_manager = create_test_execution_manager();
+    let coordinator = SymbolCoordinator::new(coord_config, execution_manager);
 
     // Create OrderRouter
     let router_config = RouterConfig { spsc_depth_default: 64, ..Default::default() };
@@ -115,7 +122,8 @@ fn test_queue_behavior_and_backpressure() {
         spsc_depth: 4, // Very small queue
         max_symbols_per_thread: 2,
     };
-    let coordinator = SymbolCoordinator::new(coord_config);
+    let execution_manager = create_test_execution_manager();
+    let coordinator = SymbolCoordinator::new(coord_config, execution_manager);
 
     let mut router = OrderRouter::new(RouterConfig { spsc_depth_default: 4, ..Default::default() });
 
@@ -160,7 +168,8 @@ fn test_error_handling_scenarios() {
 
     let coord_config =
         CoordinatorConfig { num_threads: 1, spsc_depth: 16, max_symbols_per_thread: 1 };
-    let coordinator = SymbolCoordinator::new(coord_config);
+    let execution_manager = create_test_execution_manager();
+    let coordinator = SymbolCoordinator::new(coord_config, execution_manager);
 
     let mut router = OrderRouter::new(RouterConfig::default());
     let coordinator_box = Box::new(CoordinatorAdapter { coordinator });
@@ -202,7 +211,8 @@ fn test_performance_characteristics() {
 
     let coord_config =
         CoordinatorConfig { num_threads: 4, spsc_depth: 1024, max_symbols_per_thread: 16 };
-    let coordinator = SymbolCoordinator::new(coord_config);
+    let execution_manager = create_test_execution_manager();
+    let coordinator = SymbolCoordinator::new(coord_config, execution_manager);
 
     let mut router =
         OrderRouter::new(RouterConfig { spsc_depth_default: 1024, ..Default::default() });

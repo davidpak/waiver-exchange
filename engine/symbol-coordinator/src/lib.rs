@@ -11,10 +11,12 @@ mod types;
 mod integration_test;
 
 pub use coordinator::SymbolCoordinator;
-pub use types::{CoordError, CoordinatorConfig, ReadyAtTick};
+pub use types::{
+    CoordError, CoordinatorConfig, OrderQueueWriter, ReadyAtTick, SymbolId, WhistleHandle,
+};
 
 // Define the trait locally for OrderRouter compatibility
-pub trait SymbolCoordinatorApi {
+pub trait SymbolCoordinatorApi: Send + Sync {
     fn ensure_active(&self, symbol_id: u32) -> Result<ReadyAtTick, CoordError>;
     fn release_if_idle(&self, symbol_id: u32);
 }
@@ -25,11 +27,18 @@ mod tests {
     use crate::placement::{EngineThreadPool, HashBasedPolicy, PlacementPolicy, RoundRobinPolicy};
     use crate::queue::QueueAllocator;
     use crate::registry::SymbolRegistry;
+    use execution_manager::ExecutionManager;
+    use std::sync::Arc;
+
+    fn create_test_execution_manager() -> Arc<ExecutionManager> {
+        Arc::new(ExecutionManager::new(execution_manager::ExecManagerConfig::default()))
+    }
 
     #[test]
     fn test_coordinator_creation() {
         let config = CoordinatorConfig::default();
-        let coordinator = SymbolCoordinator::new(config);
+        let execution_manager = create_test_execution_manager();
+        let coordinator = SymbolCoordinator::new(config, execution_manager);
 
         assert_eq!(coordinator.current_tick(), 0);
         assert_eq!(coordinator.active_symbols_count(), 0);
@@ -39,7 +48,8 @@ mod tests {
     #[test]
     fn test_coordinator_tick_update() {
         let config = CoordinatorConfig::default();
-        let mut coordinator = SymbolCoordinator::new(config);
+        let execution_manager = create_test_execution_manager();
+        let mut coordinator = SymbolCoordinator::new(config, execution_manager);
 
         coordinator.update_tick(100);
         assert_eq!(coordinator.current_tick(), 100);
@@ -48,7 +58,8 @@ mod tests {
     #[test]
     fn test_ensure_active_placeholder() {
         let config = CoordinatorConfig::default();
-        let coordinator = SymbolCoordinator::new(config);
+        let execution_manager = create_test_execution_manager();
+        let coordinator = SymbolCoordinator::new(config, execution_manager);
 
         // Test the placeholder implementation
         let result = coordinator.ensure_active(1);
@@ -61,7 +72,8 @@ mod tests {
     #[test]
     fn test_symbol_activation() {
         let config = CoordinatorConfig::default();
-        let coordinator = SymbolCoordinator::new(config);
+        let execution_manager = create_test_execution_manager();
+        let coordinator = SymbolCoordinator::new(config, execution_manager);
 
         // Test symbol activation
         let result = coordinator.ensure_active(1);

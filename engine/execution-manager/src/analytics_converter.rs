@@ -3,25 +3,24 @@
 //! Converts ExecutionManager events to AnalyticsEngine events for monitoring and analytics.
 
 use crate::event::{
-    BookDelta, DispatchEvent, ExecutionReport, LogLevel, OrderCancelled, SystemLog,
+    BookDelta, DispatchEvent, ExecutionReport, LogLevel, OrderCancelled, OrderSubmitted, SystemLog,
     TickBoundaryEvent, TradeEvent,
 };
 use analytics_engine::analytics::{
     AnalyticsEvent, BusinessMetrics, EventType, OperationalMetrics, PerformanceMetrics,
     SystemHealthMetrics,
 };
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-use whistle::TickId;
 
 /// Converts ExecutionManager events to AnalyticsEngine events
 pub struct AnalyticsConverter {
     /// Sampling configuration
     sampling_interval_ticks: u64,
-    last_sampled_tick: Option<TickId>,
+    last_sampled_tick: AtomicU64, // 0 means None
 
     /// Performance tracking
-    tick_start_time: Option<std::time::Instant>,
-    events_in_tick: u32,
+    events_in_tick: AtomicU32,
 }
 
 impl AnalyticsConverter {
@@ -29,34 +28,37 @@ impl AnalyticsConverter {
     pub fn new(sampling_interval_ticks: u64) -> Self {
         Self {
             sampling_interval_ticks,
-            last_sampled_tick: None,
-            tick_start_time: None,
-            events_in_tick: 0,
+            last_sampled_tick: AtomicU64::new(0), // 0 means None
+            events_in_tick: AtomicU32::new(0),
         }
     }
 
     /// Convert ExecutionManager event to AnalyticsEngine event
-    pub fn convert_event(&mut self, event: &DispatchEvent) -> Option<AnalyticsEvent> {
+    pub fn convert_event(&self, event: &DispatchEvent) -> Option<AnalyticsEvent> {
         match event {
             DispatchEvent::ExecutionReport(report) => {
-                self.events_in_tick += 1;
+                self.events_in_tick.fetch_add(1, Ordering::Relaxed);
                 Some(self.convert_execution_report(report))
             }
             DispatchEvent::TradeEvent(trade) => {
-                self.events_in_tick += 1;
+                self.events_in_tick.fetch_add(1, Ordering::Relaxed);
                 Some(self.convert_trade_event(trade))
             }
+            DispatchEvent::OrderSubmitted(submitted) => {
+                self.events_in_tick.fetch_add(1, Ordering::Relaxed);
+                Some(self.convert_order_submitted(submitted))
+            }
             DispatchEvent::OrderCancelled(cancel) => {
-                self.events_in_tick += 1;
+                self.events_in_tick.fetch_add(1, Ordering::Relaxed);
                 Some(self.convert_order_cancelled(cancel))
             }
             DispatchEvent::BookDelta(delta) => {
-                self.events_in_tick += 1;
+                self.events_in_tick.fetch_add(1, Ordering::Relaxed);
                 Some(self.convert_book_delta(delta))
             }
             DispatchEvent::TickBoundary(boundary) => self.handle_tick_boundary(boundary),
             DispatchEvent::SystemLog(log) => {
-                self.events_in_tick += 1;
+                self.events_in_tick.fetch_add(1, Ordering::Relaxed);
                 Some(self.convert_system_log(log))
             }
         }
@@ -97,6 +99,26 @@ impl AnalyticsConverter {
                     active_accounts: 1,
                     order_book_depth: 0,
                     average_trade_size: trade.quantity as f64,
+                },
+            )),
+        }
+    }
+
+    /// Convert order submitted to business metrics
+    fn convert_order_submitted(&self, submitted: &OrderSubmitted) -> AnalyticsEvent {
+        AnalyticsEvent {
+            timestamp_ns: current_timestamp_ns(),
+            tick_id: submitted.logical_timestamp,
+            symbol: format!("SYMBOL_{}", submitted.symbol),
+            event_type: EventType::Business as i32,
+            data: Some(analytics_engine::analytics::analytics_event::Data::Business(
+                BusinessMetrics {
+                    orders_processed: 1,
+                    trades_executed: 0,
+                    volume_traded: 0,
+                    active_accounts: 1,
+                    order_book_depth: 0,
+                    average_trade_size: 0.0,
                 },
             )),
         }
@@ -163,30 +185,24 @@ impl AnalyticsConverter {
     }
 
     /// Handle tick boundary events and emit performance metrics
-    fn handle_tick_boundary(&mut self, boundary: &TickBoundaryEvent) -> Option<AnalyticsEvent> {
+    fn handle_tick_boundary(&self, boundary: &TickBoundaryEvent) -> Option<AnalyticsEvent> {
         let current_tick = boundary.tick;
 
         // Check if we should sample this tick
-        let should_sample = if let Some(last_tick) = self.last_sampled_tick {
-            current_tick - last_tick >= self.sampling_interval_ticks
-        } else {
+        let last_tick = self.last_sampled_tick.load(Ordering::Relaxed);
+        let should_sample = if last_tick == 0 {
             true
+        } else {
+            current_tick - last_tick >= self.sampling_interval_ticks
         };
 
         if should_sample {
-            self.last_sampled_tick = Some(current_tick);
+            self.last_sampled_tick.store(current_tick, Ordering::Relaxed);
 
-            // Calculate tick duration
-            let tick_duration = if let Some(start_time) = self.tick_start_time {
-                start_time.elapsed().as_nanos() as u64
-            } else {
-                0
-            };
-
-            // Reset for next tick
-            self.tick_start_time = Some(std::time::Instant::now());
-            let events_count = self.events_in_tick;
-            self.events_in_tick = 0;
+            // Calculate tick duration (simplified - no timing for now)
+            let tick_duration = 0;
+            let events_count = self.events_in_tick.load(Ordering::Relaxed);
+            self.events_in_tick.store(0, Ordering::Relaxed);
 
             Some(AnalyticsEvent {
                 timestamp_ns: current_timestamp_ns(),

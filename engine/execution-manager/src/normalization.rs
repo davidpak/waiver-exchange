@@ -2,7 +2,7 @@
 
 use crate::config::NormalizationConfig;
 use crate::event::{
-    BookDelta, DispatchEvent, ExecutionReport, LogLevel, OrderCancelled, SystemLog,
+    BookDelta, DispatchEvent, ExecutionReport, LogLevel, OrderCancelled, OrderSubmitted, SystemLog,
     TickBoundaryEvent, TradeEvent,
 };
 use crate::id_allocator::ExecutionIdAllocator;
@@ -23,7 +23,7 @@ impl EventNormalizer {
     pub fn normalize(
         &self,
         event: EngineEvent,
-        id_allocator: &mut ExecutionIdAllocator,
+        id_allocator: &ExecutionIdAllocator,
     ) -> Result<DispatchEvent, String> {
         let now = Instant::now();
 
@@ -102,9 +102,15 @@ impl EventNormalizer {
                         Ok(DispatchEvent::SystemLog(system_log))
                     }
                     LifecycleKind::Accepted => {
-                        // Accepted orders don't generate events in ExecutionManager
-                        // They're handled through trade events
-                        Err("Accepted lifecycle events are not dispatched".to_string())
+                        // Create order submission event for accepted orders
+                        let order_submitted = OrderSubmitted {
+                            order_id: lifecycle.order_id,
+                            logical_timestamp: lifecycle.tick,
+                            wall_clock_timestamp: now,
+                            symbol: lifecycle.symbol,
+                        };
+
+                        Ok(DispatchEvent::OrderSubmitted(order_submitted))
                     }
                 }
             }
@@ -141,7 +147,7 @@ mod tests {
     #[test]
     fn test_trade_normalization() {
         let normalizer = create_test_normalizer();
-        let mut id_allocator = ExecutionIdAllocator::new(Default::default());
+        let id_allocator = ExecutionIdAllocator::new(Default::default());
 
         let trade = EngineEvent::Trade(EvTrade {
             symbol: 1,
@@ -154,7 +160,7 @@ mod tests {
             taker_order: 2,
         });
 
-        let normalized = normalizer.normalize(trade, &mut id_allocator).unwrap();
+        let normalized = normalizer.normalize(trade, &id_allocator).unwrap();
 
         match normalized {
             DispatchEvent::ExecutionReport(report) => {
@@ -172,7 +178,7 @@ mod tests {
     #[test]
     fn test_book_delta_normalization() {
         let normalizer = create_test_normalizer();
-        let mut id_allocator = ExecutionIdAllocator::new(Default::default());
+        let id_allocator = ExecutionIdAllocator::new(Default::default());
 
         let book_delta = EngineEvent::BookDelta(EvBookDelta {
             symbol: 1,
@@ -182,7 +188,7 @@ mod tests {
             level_qty_after: 20,
         });
 
-        let normalized = normalizer.normalize(book_delta, &mut id_allocator).unwrap();
+        let normalized = normalizer.normalize(book_delta, &id_allocator).unwrap();
 
         match normalized {
             DispatchEvent::BookDelta(delta) => {
@@ -198,7 +204,7 @@ mod tests {
     #[test]
     fn test_lifecycle_normalization() {
         let normalizer = create_test_normalizer();
-        let mut id_allocator = ExecutionIdAllocator::new(Default::default());
+        let id_allocator = ExecutionIdAllocator::new(Default::default());
 
         // Test cancellation
         let lifecycle = EngineEvent::Lifecycle(EvLifecycle {
@@ -209,7 +215,7 @@ mod tests {
             reason: None,
         });
 
-        let normalized = normalizer.normalize(lifecycle, &mut id_allocator).unwrap();
+        let normalized = normalizer.normalize(lifecycle, &id_allocator).unwrap();
 
         match normalized {
             DispatchEvent::OrderCancelled(cancelled) => {
@@ -228,7 +234,7 @@ mod tests {
             reason: Some(RejectReason::BadTick),
         });
 
-        let normalized = normalizer.normalize(lifecycle, &mut id_allocator).unwrap();
+        let normalized = normalizer.normalize(lifecycle, &id_allocator).unwrap();
 
         match normalized {
             DispatchEvent::SystemLog(log) => {
@@ -243,11 +249,11 @@ mod tests {
     #[test]
     fn test_tick_complete_normalization() {
         let normalizer = create_test_normalizer();
-        let mut id_allocator = ExecutionIdAllocator::new(Default::default());
+        let id_allocator = ExecutionIdAllocator::new(Default::default());
 
         let tick_complete = EngineEvent::TickComplete(EvTickComplete { symbol: 1, tick: 100 });
 
-        let normalized = normalizer.normalize(tick_complete, &mut id_allocator).unwrap();
+        let normalized = normalizer.normalize(tick_complete, &id_allocator).unwrap();
 
         match normalized {
             DispatchEvent::TickBoundary(boundary) => {

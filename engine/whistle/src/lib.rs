@@ -39,11 +39,11 @@ pub struct Whistle {
     seq_in_tick: u32, // Sequence number for events within the current tick
 
     // Order processing components
-    inbound_queue: InboundQueue, // SPSC queue for messages from OrderRouter
-    outbound_queue: OutboundQueue, // MPSC queue for events to ExecutionManager
-    arena: Arena,                // Preallocated order storage
-    book: Book,                  // Order book with price-time priority
-    order_index: OrderIndex,     // O(1) order lookup by order_id
+    inbound_queue: std::sync::Arc<InboundQueue>, // SPSC queue for messages from OrderRouter
+    outbound_queue: OutboundQueue,               // MPSC queue for events to ExecutionManager
+    arena: Arena,                                // Preallocated order storage
+    book: Book,                                  // Order book with price-time priority
+    order_index: OrderIndex,                     // O(1) order lookup by order_id
 
     // State tracking
     reference_price: Option<Price>, // Current reference price for bands
@@ -57,7 +57,37 @@ impl Whistle {
         let emitter = EventEmitter::new(cfg.symbol);
 
         // Initialize order processing components
-        let inbound_queue = InboundQueue::new(cfg.batch_max as usize);
+        let inbound_queue = std::sync::Arc::new(InboundQueue::new(cfg.batch_max as usize));
+        let outbound_queue = OutboundQueue::with_default_capacity();
+        let arena = Arena::with_capacity(cfg.arena_capacity);
+        let book = Book::new(dom);
+        let order_index = OrderIndex::with_capacity_pow2(cfg.arena_capacity as usize * 2); // 2x capacity for hash table
+
+        Self {
+            cfg,
+            dom,
+            emitter,
+            seq_in_tick: 0,
+            inbound_queue,
+            outbound_queue,
+            arena,
+            book,
+            order_index,
+            reference_price: None,
+            modified_levels: std::collections::HashSet::new(),
+        }
+    }
+
+    /// Create a new Whistle with a specific inbound queue (for SymbolCoordinator integration)
+    pub fn new_with_inbound_queue(
+        cfg: EngineCfg,
+        inbound_queue: std::sync::Arc<InboundQueue>,
+    ) -> Self {
+        cfg.validate().expect("invalid EngineCfg");
+        let dom = cfg.price_domain;
+        let emitter = EventEmitter::new(cfg.symbol);
+
+        // Use the provided inbound queue instead of creating a new one
         let outbound_queue = OutboundQueue::with_default_capacity();
         let arena = Arena::with_capacity(cfg.arena_capacity);
         let book = Book::new(dom);
@@ -89,7 +119,25 @@ impl Whistle {
         self.emitter.start_tick(t);
 
         // Step 1: Drain inbound queue (up to batch_max)
-        let messages = self.inbound_queue.drain(self.cfg.batch_max as usize);
+        let messages = self.inbound_queue.drain_lockfree(self.cfg.batch_max as usize);
+        if !messages.is_empty() {
+            tracing::info!(
+                "Whistle engine {} drained {} messages at tick {}",
+                self.cfg.symbol,
+                messages.len(),
+                t
+            );
+
+            // Debug: Show current book state
+            let best_bid = self.book.best_bid();
+            let best_ask = self.book.best_ask();
+            tracing::debug!(
+                "Symbol {}: Book state - best_bid: {:?}, best_ask: {:?}",
+                self.cfg.symbol,
+                best_bid.map(|idx| self.dom.price(idx)),
+                best_ask.map(|idx| self.dom.price(idx))
+            );
+        }
 
         // Step 2: Process each message (validate, admit, queue for matching)
         let mut orders_to_match = Vec::new();
@@ -139,7 +187,7 @@ impl Whistle {
             }
         }
 
-        // Emit tick complete event
+        // Always emit TickComplete for the tick method (for backward compatibility with tests)
         let tick_complete = EvTickComplete { symbol: self.cfg.symbol, tick: t };
         self.emitter
             .emit(EngineEvent::TickComplete(tick_complete))
@@ -160,7 +208,25 @@ impl Whistle {
         self.emitter.start_tick(t);
 
         // Step 1: Drain inbound queue (up to batch_max)
-        let messages = self.inbound_queue.drain(self.cfg.batch_max as usize);
+        let messages = self.inbound_queue.drain_lockfree(self.cfg.batch_max as usize);
+        if !messages.is_empty() {
+            tracing::info!(
+                "Whistle engine {} drained {} messages at tick {}",
+                self.cfg.symbol,
+                messages.len(),
+                t
+            );
+
+            // Debug: Show current book state
+            let best_bid = self.book.best_bid();
+            let best_ask = self.book.best_ask();
+            tracing::debug!(
+                "Symbol {}: Book state - best_bid: {:?}, best_ask: {:?}",
+                self.cfg.symbol,
+                best_bid.map(|idx| self.dom.price(idx)),
+                best_ask.map(|idx| self.dom.price(idx))
+            );
+        }
 
         // Step 2: Process each message (validate, admit, queue for matching)
         let mut orders_to_match = Vec::new();
@@ -210,15 +276,21 @@ impl Whistle {
             }
         }
 
-        // Emit tick complete event
-        let tick_complete = EvTickComplete { symbol: self.cfg.symbol, tick: t };
-        self.emitter
-            .emit(EngineEvent::TickComplete(tick_complete))
-            .expect("TickComplete should always be valid");
-
-        // Emit all events to the OutboundQueue
+        // Check if there was any activity in this tick
         let events = self.emitter.take_events();
-        for event in events {
+        let had_activity = !events.is_empty();
+
+        // Only emit TickComplete if there was actual activity
+        if had_activity {
+            let tick_complete = EvTickComplete { symbol: self.cfg.symbol, tick: t };
+            self.emitter
+                .emit(EngineEvent::TickComplete(tick_complete))
+                .expect("TickComplete should always be valid");
+        }
+
+        // Emit all events to the OutboundQueue (including TickComplete if there was activity)
+        let final_events = self.emitter.take_events();
+        for event in final_events {
             if self.outbound_queue.try_enqueue(event).is_err() {
                 // This should not happen with Fatal policy as it would exit the process
                 // But we handle it gracefully for safety
@@ -331,7 +403,9 @@ impl Whistle {
 
         let mut rejections = Vec::new();
 
-        for handle in orders_to_match.iter() {
+        // Process orders in sequence, but allow matching against orders already in the book
+        // and against orders processed earlier in this tick
+        for (i, handle) in orders_to_match.iter().enumerate() {
             let order_data = {
                 let order = self.arena.get(*handle);
                 (order.id, order.side, order.price_idx, order.qty_open, order.typ, order.acct)
@@ -348,11 +422,29 @@ impl Whistle {
 
             let mut remaining_qty = order_qty;
 
+            // First, try to match against existing orders in the book
             while remaining_qty > 0 {
                 let best_opposite = self.get_best_opposite_price(order_side);
 
                 if let Some(best_price) = best_opposite {
+                    tracing::debug!(
+                        "Symbol {}: Order {} ({} at {}) can match against best opposite price {}",
+                        self.cfg.symbol,
+                        order_id,
+                        if order_side == Side::Buy { "BUY" } else { "SELL" },
+                        self.dom.price(order_price_idx),
+                        self.dom.price(best_price)
+                    );
+
                     if self.can_match_at_price(order_side, order_price_idx, best_price) {
+                        tracing::info!(
+                            "Symbol {}: MATCHING order {} ({} at {}) against book at {}",
+                            self.cfg.symbol,
+                            order_id,
+                            if order_side == Side::Buy { "BUY" } else { "SELL" },
+                            self.dom.price(order_price_idx),
+                            self.dom.price(best_price)
+                        );
                         let opposite_side = order_side.opposite();
                         let mut maker_handle = self.book.level_head(opposite_side, best_price);
 
@@ -419,6 +511,71 @@ impl Whistle {
                     }
                 } else {
                     break;
+                }
+            }
+
+            // Then, try to match against orders processed earlier in this tick
+            if remaining_qty > 0 {
+                for (_j, &other_handle) in orders_to_match.iter().enumerate().take(i) {
+                    if !self.arena.is_valid(other_handle) {
+                        continue; // This order was already fully matched
+                    }
+
+                    // Get order data to avoid borrow conflicts
+                    let (other_order_id, other_side, other_price_idx, other_qty_open, other_acct) = {
+                        let other_order = self.arena.get(other_handle);
+                        (
+                            other_order.id,
+                            other_order.side,
+                            other_order.price_idx,
+                            other_order.qty_open,
+                            other_order.acct,
+                        )
+                    };
+
+                    // Check if orders can match
+                    if other_side != order_side
+                        && self.can_match_at_price(order_side, order_price_idx, other_price_idx)
+                    {
+                        // Check self-match prevention
+                        if self.cfg.self_match_policy == SelfMatchPolicy::Skip
+                            && other_acct == order_acct
+                        {
+                            continue;
+                        }
+
+                        let trade_qty = std::cmp::min(remaining_qty, other_qty_open);
+
+                        let trade = EvTrade {
+                            symbol: self.cfg.symbol,
+                            tick,
+                            exec_id: self.next_exec_id(tick),
+                            price: self.dom.price(other_price_idx),
+                            qty: trade_qty,
+                            taker_side: order_side,
+                            maker_order: other_order_id,
+                            taker_order: order_id,
+                        };
+                        self.emitter
+                            .emit(EngineEvent::Trade(trade))
+                            .expect("Trade event should always be valid");
+
+                        // Update the maker order
+                        let maker_remaining = other_qty_open - trade_qty;
+                        if maker_remaining == 0 {
+                            self.arena.free(other_handle);
+                        } else {
+                            let maker_order_mut = self.arena.get_mut(other_handle);
+                            maker_order_mut.qty_open = maker_remaining;
+                        }
+
+                        self.modified_levels.insert((other_side, other_price_idx));
+                        remaining_qty -= trade_qty;
+
+                        if remaining_qty == 0 {
+                            break;
+                        }
+                    }
                 }
             }
 
@@ -505,7 +662,7 @@ impl Whistle {
     /// - `Ok(())` if the message was successfully enqueued
     /// - `Err(RejectReason::QueueBackpressure)` if the queue is full
     pub fn enqueue_message(&mut self, msg: InboundMsg) -> Result<(), RejectReason> {
-        self.inbound_queue.try_enqueue(msg)
+        self.inbound_queue.try_enqueue_lockfree(msg)
     }
 
     /// Get queue statistics for monitoring
@@ -515,7 +672,7 @@ impl Whistle {
 
     /// Clear the inbound queue
     pub fn clear_queue(&mut self) {
-        self.inbound_queue.clear();
+        self.inbound_queue.clear_lockfree();
     }
 
     /// Get a reference to the OutboundQueue for ExecutionManager consumption

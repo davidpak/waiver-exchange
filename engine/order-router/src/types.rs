@@ -31,7 +31,7 @@ pub enum CoordError {
 }
 
 /// Trait that SymbolCoordinator must implement for OrderRouter integration
-pub trait SymbolCoordinatorApi: Send {
+pub trait SymbolCoordinatorApi: Send + Sync {
     fn ensure_active(&self, symbol_id: u32) -> Result<ReadyAtTick, CoordError>;
     fn release_if_idle(&self, symbol_id: u32);
 }
