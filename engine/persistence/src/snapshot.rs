@@ -211,9 +211,6 @@ impl SnapshotManager {
             *current = Some(final_snapshot.clone());
         }
 
-        // Clean up old snapshots
-        self.cleanup_old_snapshots().await?;
-
         tracing::info!(
             "Created snapshot {} for tick {} ({}ms, {} bytes)",
             final_snapshot.id,
@@ -221,6 +218,9 @@ impl SnapshotManager {
             final_snapshot.metadata.creation_duration_ms,
             final_snapshot.metadata.file_size
         );
+
+        // Clean up old snapshots AFTER creating new one
+        self.cleanup_old_snapshots().await?;
 
         Ok(final_snapshot.id)
     }
@@ -230,7 +230,20 @@ impl SnapshotManager {
         let snapshots = self.list_snapshots().await?;
 
         if snapshots.is_empty() {
+            tracing::info!("No snapshots found, starting with clean state");
             return Ok(None);
+        }
+
+        // Debug: Log all available snapshots
+        tracing::info!("Found {} snapshots:", snapshots.len());
+        for (i, snapshot) in snapshots.iter().enumerate() {
+            tracing::info!(
+                "  Snapshot {}: ID={}, tick={}, path={:?}",
+                i + 1,
+                snapshot.snapshot_id,
+                snapshot.tick,
+                snapshot.path
+            );
         }
 
         // Find the most recent snapshot
@@ -239,7 +252,24 @@ impl SnapshotManager {
             .max_by_key(|s| s.tick)
             .ok_or_else(|| PersistenceError::not_found("No snapshots found"))?;
 
-        Ok(Some(self.load_snapshot(&latest.path).await?))
+        tracing::info!(
+            "Loading latest snapshot: ID={}, tick={}, path={:?}",
+            latest.snapshot_id,
+            latest.tick,
+            latest.path
+        );
+
+        let snapshot = self.load_snapshot(&latest.path).await?;
+
+        tracing::info!(
+            "Successfully loaded snapshot: ID={}, tick={}, symbols={}, order_books={}",
+            snapshot.id,
+            snapshot.tick,
+            snapshot.state.active_symbols.len(),
+            snapshot.state.order_books.len()
+        );
+
+        Ok(Some(snapshot))
     }
 
     /// Load a specific snapshot by ID
@@ -282,8 +312,8 @@ impl SnapshotManager {
             }
         }
 
-        // Sort by tick (most recent first)
-        snapshots.sort_by_key(|s| std::cmp::Reverse(s.tick));
+        // Sort by tick (oldest first) so we can remove the oldest ones
+        snapshots.sort_by_key(|s| s.tick);
 
         Ok(snapshots)
     }
@@ -292,12 +322,32 @@ impl SnapshotManager {
     pub async fn cleanup_old_snapshots(&self) -> Result<()> {
         let snapshots = self.list_snapshots().await?;
 
+        tracing::info!(
+            "Cleanup: Found {} snapshots, max allowed: {}",
+            snapshots.len(),
+            self.config.max_snapshots
+        );
+
         if snapshots.len() <= self.config.max_snapshots {
+            tracing::info!("Cleanup: No cleanup needed, within limit");
             return Ok(());
         }
 
-        let _snapshots_to_remove = snapshots.len() - self.config.max_snapshots;
-        for snapshot in snapshots.iter().skip(self.config.max_snapshots) {
+        let snapshots_to_remove = snapshots.len() - self.config.max_snapshots;
+        tracing::info!("Cleanup: Need to remove {} snapshots", snapshots_to_remove);
+
+        // Log the snapshots we're about to remove (the oldest ones)
+        for (i, snapshot) in snapshots.iter().take(snapshots_to_remove).enumerate() {
+            tracing::info!(
+                "Cleanup: Will remove snapshot {}: tick={}, path={:?}",
+                i + 1,
+                snapshot.tick,
+                snapshot.path
+            );
+        }
+
+        // Remove the oldest snapshots (first ones in the sorted list)
+        for snapshot in snapshots.iter().take(snapshots_to_remove) {
             std::fs::remove_file(&snapshot.path).map_err(PersistenceError::Io)?;
 
             tracing::info!("Removed old snapshot: {:?}", snapshot.path);
