@@ -1,0 +1,65 @@
+[package]
+name = "waiver-exchange-service"
+version = "0.1.0"
+edition = "2021"
+authors = ["Waiver Exchange Team"]
+description = "Production service for the Waiver Exchange trading platform"
+license = "MIT"
+
+[[bin]]
+name = "waiver-exchange"
+path = "src/main.rs"
+
+[dependencies]
+# Core system components
+simulation-clock = { path = "../simulation-clock" }
+symbol-coordinator = { path = "../symbol-coordinator" }
+execution-manager = { path = "../execution-manager" }
+order-router = { path = "../order-router" }
+persistence = { path = "../persistence" }
+order-gateway = { path = "../order-gateway" }
+player-registry = { path = "../player-registry" }
+whistle = { path = "../whistle" }
+
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+futures = "0.3"
+
+# Configuration and serialization
+config = "0.13"
+toml = "0.7"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# System utilities
+signal-hook = "0.3"
+
+# Metrics and monitoring
+metrics = "0.21"
+metrics-exporter-prometheus = "0.12"
+
+# Time and duration
+chrono = { version = "0.4", features = ["serde"] }
+
+# System information
+sysinfo = "0.29"
+num_cpus = "1.0"
+
+# CLI argument parsing
+clap = { version = "4.0", features = ["derive"] }
+
+# File system operations
+walkdir = "2.0"
+
+[dev-dependencies]
+tempfile = "3.0"
+tokio-test = "0.4"
