@@ -1,0 +1,64 @@
+[package]
+name = "order-gateway"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+authors = ["Waiver Exchange Team"]
+description = "OrderGateway - WebSocket API for order submission and market data"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+
+# WebSocket server
+tokio-tungstenite = "0.20"
+tungstenite = "0.20"
+futures-util = "0.3"
+
+# HTTP server (for health checks)
+warp = "0.3"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Logging and tracing
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Configuration
+config = "0.13"
+toml = "0.7"
+
+# Time handling
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID generation
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+
+# Metrics
+metrics = "0.21"
+metrics-exporter-prometheus = "0.12"
+
+# Async traits
+async-trait = "0.1"
+
+# System dependencies
+parking_lot = "0.12"
+dashmap = "5.5"
+
+# Core system dependencies
+whistle = { path = "../whistle" }
+order-router = { path = "../order-router" }
+symbol-coordinator = { path = "../symbol-coordinator" }
+execution-manager = { path = "../execution-manager" }
+persistence = { path = "../persistence" }
+player-registry = { path = "../player-registry" }
+
+[dev-dependencies]
+tokio-test = "0.4"

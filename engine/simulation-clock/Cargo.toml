@@ -1,0 +1,51 @@
+[package]
+name = "simulation-clock"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+authors = ["Waiver Exchange Team"]
+description = "System heartbeat that drives logical time progression and coordinates all trading components"
+
+[dependencies]
+# Core dependencies
+tokio = { version = "1.0", features = ["full"] }
+futures = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+# Threading and concurrency
+rayon = "1.7"
+crossbeam = "0.8"
+parking_lot = "0.12"
+
+# Time and timing
+chrono = { version = "0.4", features = ["serde"] }
+num_cpus = "1.0"
+
+# Configuration
+config = "0.13"
+toml = "0.7"
+
+# Metrics and monitoring
+metrics = "0.21"
+metrics-exporter-prometheus = "0.12"
+
+# Internal dependencies
+whistle = { path = "../whistle" }
+symbol-coordinator = { path = "../symbol-coordinator" }
+execution-manager = { path = "../execution-manager" }
+order-router = { path = "../order-router" }
+persistence = { path = "../persistence" }
+
+[dev-dependencies]
+tokio-test = "0.4"
+criterion = "0.5"
+proptest = "1.0"
+
+# [[bench]]
+# name = "simulation_clock_bench"
+# harness = false
