@@ -1,0 +1,18 @@
+[package]
+name = "player-scraper"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+authors = ["Waiver Exchange Team"]
+description = "Web scraper for NFL fantasy football player data"
+
+[dependencies]
+reqwest = { version = "0.11", features = ["json"] }
+scraper = "0.18"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.0", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+anyhow = "1.0"
+chrono = { version = "0.4", features = ["serde"] }
