@@ -7,4 +7,5 @@ license = "Apache-2.0 OR MIT"
 [dependencies]
 order-router = { path = "../../engine/order-router" }
 symbol-coordinator = { path = "../../engine/symbol-coordinator" }
+execution-manager = { path = "../../engine/execution-manager" }
 whistle = { path = "../../engine/whistle" }

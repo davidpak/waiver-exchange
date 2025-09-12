@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>OrderGateway Test</title>
+</head>
+<body>
+    <h1>Waiver Exchange OrderGateway Test</h1>
+    <div id="status">Connecting...</div>
+    <div id="messages"></div>
+    
+    <script>
+        const status = document.getElementById('status');
+        const messages = document.getElementById('messages');
+        
+        // Connect to WebSocket
+        const ws = new WebSocket('ws://localhost:8080');
+        
+        ws.onopen = function(event) {
+            status.textContent = 'Connected to OrderGateway';
+            status.style.color = 'green';
+            
+            // Test authentication
+            const authMessage = {
+                method: 'auth.login',
+                params: {
+                    api_key: 'ak_test_1234567890abcdef',
+                    api_secret: 'sk_test_abcdef1234567890'
+                },
+                id: 'auth_001'
+            };
+            
+            ws.send(JSON.stringify(authMessage));
+        };
+        
+        ws.onmessage = function(event) {
+            const message = JSON.parse(event.data);
+            const messageDiv = document.createElement('div');
+            messageDiv.textContent = JSON.stringify(message, null, 2);
+            messageDiv.style.border = '1px solid #ccc';
+            messageDiv.style.margin = '5px';
+            messageDiv.style.padding = '10px';
+            messageDiv.style.fontFamily = 'monospace';
+            messageDiv.style.fontSize = '12px';
+            messages.appendChild(messageDiv);
+        };
+        
+        ws.onerror = function(error) {
+            status.textContent = 'Connection error: ' + error;
+            status.style.color = 'red';
+        };
+        
+        ws.onclose = function(event) {
+            status.textContent = 'Connection closed';
+            status.style.color = 'red';
+        };
+    </script>
+</body>
+</html>

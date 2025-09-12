@@ -1,7 +1,7 @@
 //! Signal handling for graceful shutdown
 
 use anyhow::Result;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::oneshot;
 use tokio::time::timeout;
@@ -12,8 +12,10 @@ use crate::service::ServiceState;
 /// Setup signal handlers for graceful shutdown
 pub fn setup_signal_handlers(_service_state: Arc<ServiceState>) -> Result<oneshot::Receiver<()>> {
     let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let shutdown_tx_shared = Arc::new(Mutex::new(Some(shutdown_tx)));
 
     // Handle Ctrl+C (SIGINT)
+    let shutdown_tx_clone = shutdown_tx_shared.clone();
     tokio::spawn(async move {
         if let Err(e) = tokio::signal::ctrl_c().await {
             error!("Failed to listen for Ctrl+C signal: {}", e);
@@ -21,13 +23,15 @@ pub fn setup_signal_handlers(_service_state: Arc<ServiceState>) -> Result<onesho
         }
 
         info!("Ctrl+C signal received");
-        let _ = shutdown_tx.send(());
+        if let Some(tx) = shutdown_tx_clone.lock().unwrap().take() {
+            let _ = tx.send(());
+        }
     });
 
     // Handle SIGTERM (Unix only)
     #[cfg(unix)]
     {
-        let shutdown_tx = shutdown_tx;
+        let shutdown_tx_sigterm = shutdown_tx_shared.clone();
         tokio::spawn(async move {
             use signal_hook::consts::SIGTERM;
             use std::sync::atomic::{AtomicBool, Ordering};
@@ -46,7 +50,9 @@ pub fn setup_signal_handlers(_service_state: Arc<ServiceState>) -> Result<onesho
             loop {
                 if shutdown_flag.load(Ordering::Relaxed) {
                     info!("SIGTERM signal received");
-                    let _ = shutdown_tx.send(());
+                    if let Some(tx) = shutdown_tx_sigterm.lock().unwrap().take() {
+                        let _ = tx.send(());
+                    }
                     break;
                 }
                 tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
