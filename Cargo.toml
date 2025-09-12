@@ -7,6 +7,12 @@ members = [
     "engine/symbol-coordinator",
     "engine/execution-manager",
     "engine/analytics-engine",
+    "engine/persistence",
+    "engine/simulation-clock",
+    "engine/order-gateway",
+    "engine/player-scraper",
+    "engine/player-registry",
+    "engine/waiver-exchange-service",
     "tools/admin-cli",
     "tools/symbol-coordinator-demo",
 ]
