@@ -12,7 +12,7 @@ use whistle::{
 };
 
 /// Type alias for order book state to reduce complexity
-type OrderBookState = (Vec<(u32, u32)>, Vec<(u32, u32)>);
+type OrderBookState = (Vec<(u32, u64)>, Vec<(u32, u64)>);
 
 /// Type alias for trade info to reduce complexity
 type TradeInfo = (Option<u64>, Option<u64>, Option<chrono::DateTime<chrono::Utc>>);

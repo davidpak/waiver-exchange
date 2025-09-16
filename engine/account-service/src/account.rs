@@ -1,0 +1,459 @@
+//! AccountService implementation
+
+use crate::balance::Balance;
+use crate::config::AccountServiceConfig;
+use crate::position::{Position, TradeSide};
+use crate::reservation::{Reservation, ReservationId, ReservationManager};
+use crate::trade::{Trade, TradeDetails};
+use crate::sleeper::{LeagueOption, SleeperClient};
+use crate::oauth::GoogleOAuthClient;
+use crate::{AccountServiceError, Result};
+use chrono::Utc;
+use redis::Client as RedisClient;
+use serde::{Deserialize, Serialize};
+use sqlx::PgPool;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+/// Account represents a user account
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Account {
+    pub id: i64,
+    pub google_id: Option<String>,
+    pub sleeper_user_id: Option<String>,
+    pub sleeper_roster_id: Option<String>,
+    pub sleeper_league_id: Option<String>,
+    pub display_name: Option<String>,
+    pub fantasy_points: Option<i32>,
+    pub weekly_wins: Option<i32>,
+    pub currency_balance: Option<i64>, // In cents
+    pub created_at: Option<chrono::NaiveDateTime>,
+    pub last_updated: Option<chrono::NaiveDateTime>,
+}
+
+/// AccountService provides account management, balance tracking, and risk validation
+pub struct AccountService {
+    db_pool: PgPool,
+    redis_client: RedisClient,
+    sleeper_client: SleeperClient,
+    google_client: GoogleOAuthClient,
+    reservation_manager: Arc<Mutex<ReservationManager>>,
+    config: AccountServiceConfig,
+}
+
+impl AccountService {
+    /// Create a new AccountService
+    pub async fn new(config: AccountServiceConfig) -> Result<Self> {
+        // Create database pool
+        let db_pool = PgPool::connect(&config.database.url).await?;
+        
+        // Run migrations
+        sqlx::migrate!("./migrations").run(&db_pool).await?;
+        
+        // Create Redis client
+        let redis_client = RedisClient::open(config.redis.url.clone())?;
+        
+        // Create Sleeper client
+        let sleeper_client = SleeperClient::new(config.sleeper.clone());
+        
+        // Create Google OAuth client
+        let google_client = GoogleOAuthClient::new(&config.oauth)?;
+        
+        Ok(Self {
+            db_pool,
+            redis_client,
+            sleeper_client,
+            google_client,
+            reservation_manager: Arc::new(Mutex::new(ReservationManager::new())),
+            config,
+        })
+    }
+    
+    /// Authenticate user with Google OAuth
+    pub async fn authenticate_with_google(&self, google_token: &str) -> Result<Account> {
+        let user_info = self.google_client.get_user_info(google_token).await?;
+        
+        // Check if account exists
+        let account = sqlx::query_as!(
+            Account,
+            "SELECT * FROM accounts WHERE google_id = $1",
+            user_info.id
+        )
+        .fetch_optional(&self.db_pool)
+        .await?;
+        
+        if let Some(account) = account {
+            Ok(account)
+        } else {
+            // Create new account
+            let account = sqlx::query_as!(
+                Account,
+                "INSERT INTO accounts (google_id, display_name, created_at, last_updated) 
+                 VALUES ($1, $2, NOW(), NOW()) 
+                 RETURNING *",
+                user_info.id,
+                user_info.name
+            )
+            .fetch_one(&self.db_pool)
+            .await?;
+            
+            Ok(account)
+        }
+    }
+    
+    /// Link Sleeper league to account
+    pub async fn link_sleeper_league(&self, _account_id: i64, username: &str, season: &str) -> Result<Vec<LeagueOption>> {
+        self.sleeper_client.get_user_leagues(username, season).await
+    }
+    
+    /// Select a Sleeper league
+    pub async fn select_sleeper_league(&self, account_id: i64, league_id: &str, roster_id: &str) -> Result<()> {
+        sqlx::query!(
+            "UPDATE accounts SET sleeper_league_id = $1, sleeper_roster_id = $2, last_updated = NOW() 
+             WHERE id = $3",
+            league_id,
+            roster_id,
+            account_id
+        )
+        .execute(&self.db_pool)
+        .await?;
+        
+        Ok(())
+    }
+    
+    /// Get account by ID
+    pub async fn get_account(&self, account_id: i64) -> Result<Account> {
+        let account = sqlx::query_as!(
+            Account,
+            "SELECT * FROM accounts WHERE id = $1",
+            account_id
+        )
+        .fetch_optional(&self.db_pool)
+        .await?
+        .ok_or_else(|| AccountServiceError::AccountNotFound { account_id })?;
+        
+        Ok(account)
+    }
+    
+    /// Get account balance in cents
+    pub async fn get_balance(&self, account_id: i64) -> Result<i64> {
+        let row = sqlx::query!(
+            "SELECT currency_balance FROM accounts WHERE id = $1",
+            account_id
+        )
+        .fetch_optional(&self.db_pool)
+        .await?
+        .ok_or_else(|| AccountServiceError::AccountNotFound { account_id })?;
+        
+        Ok(row.currency_balance.unwrap_or(0))
+    }
+    
+    /// Get all positions for an account
+    pub async fn get_positions(&self, account_id: i64) -> Result<Vec<Position>> {
+        let rows = sqlx::query!(
+            "SELECT symbol_id, quantity, avg_cost, last_updated FROM positions WHERE account_id = $1",
+            account_id
+        )
+        .fetch_all(&self.db_pool)
+        .await?;
+        
+        let positions = rows
+            .into_iter()
+            .map(|row| Position {
+                account_id,
+                symbol_id: row.symbol_id,
+                quantity: Balance::from_basis_points(row.quantity),
+                avg_cost: Balance::from_cents(row.avg_cost),
+                last_updated: row.last_updated.unwrap_or_else(|| chrono::Utc::now().naive_utc()),
+            })
+            .collect();
+        
+        Ok(positions)
+    }
+    
+    /// Get position for a specific symbol
+    pub async fn get_position(&self, account_id: i64, symbol_id: i64) -> Result<Option<Position>> {
+        let row = sqlx::query!(
+            "SELECT symbol_id, quantity, avg_cost, last_updated FROM positions WHERE account_id = $1 AND symbol_id = $2",
+            account_id,
+            symbol_id
+        )
+        .fetch_optional(&self.db_pool)
+        .await?;
+        
+        if let Some(row) = row {
+            Ok(Some(Position {
+                account_id,
+                symbol_id: row.symbol_id,
+                quantity: Balance::from_basis_points(row.quantity),
+                avg_cost: Balance::from_cents(row.avg_cost),
+                last_updated: row.last_updated.unwrap_or_else(|| chrono::Utc::now().naive_utc()),
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+    
+    /// Check and reserve balance for an order
+    pub async fn check_and_reserve_balance(&self, account_id: i64, amount: i64, order_id: i64) -> Result<ReservationId> {
+        // Get current balance
+        let balance = self.get_balance(account_id).await?;
+        
+        // Get total reserved amount
+        let mut manager = self.reservation_manager.lock().await;
+        let total_reserved = manager.get_total_reserved(account_id);
+        
+        // Check if sufficient balance is available
+        let available_balance = balance - total_reserved.to_cents();
+        if available_balance < amount {
+            return Err(AccountServiceError::InsufficientBalance {
+                required: amount as u64,
+                available: available_balance.max(0) as u64,
+            });
+        }
+        
+        // Create reservation
+        let reservation_id = ReservationId(order_id as u64); // Using order_id as reservation_id for simplicity
+        let expires_at = Utc::now() + chrono::Duration::days(self.config.reservation_expiry_days as i64);
+        let reservation = Reservation::new(
+            reservation_id,
+            account_id,
+            Balance::from_cents(amount),
+            order_id,
+            expires_at.naive_utc(),
+        );
+        
+        // Store reservation in database
+        sqlx::query!(
+            "INSERT INTO reservations (id, account_id, amount, order_id, status, created_at, expires_at) 
+             VALUES ($1, $2, $3, $4, $5, NOW(), $6)",
+            reservation_id.0 as i64,
+            account_id,
+            amount,
+            order_id,
+            "active",
+            expires_at.naive_utc()
+        )
+        .execute(&self.db_pool)
+        .await?;
+        
+        // Add to in-memory manager
+        manager.add_reservation(reservation);
+        
+        Ok(reservation_id)
+    }
+    
+    /// Settle a reserved balance (convert reservation to actual trade)
+    pub async fn settle_reserved_balance(&self, reservation_id: ReservationId, trade_details: TradeDetails) -> Result<()> {
+        // Get reservation from database
+        let row = sqlx::query!(
+            "SELECT * FROM reservations WHERE id = $1 AND status = 'active'",
+            reservation_id.0 as i64
+        )
+        .fetch_optional(&self.db_pool)
+        .await?
+        .ok_or_else(|| AccountServiceError::ReservationNotFound { reservation_id: reservation_id.0 })?;
+        
+        // Update reservation status to settled
+        sqlx::query!(
+            "UPDATE reservations SET status = 'settled' WHERE id = $1",
+            reservation_id.0 as i64
+        )
+        .execute(&self.db_pool)
+        .await?;
+        
+        // Settle the trade
+        self.settle_trade(&trade_details).await?;
+        
+        // Remove from in-memory manager
+        let mut manager = self.reservation_manager.lock().await;
+        manager.remove_reservation(reservation_id);
+        
+        Ok(())
+    }
+    
+    /// Release a reservation (cancel order)
+    pub async fn release_reservation(&self, reservation_id: ReservationId) -> Result<()> {
+        // Update reservation status in database
+        sqlx::query!(
+            "UPDATE reservations SET status = 'cancelled' WHERE id = $1",
+            reservation_id.0 as i64
+        )
+        .execute(&self.db_pool)
+        .await?;
+        
+        // Remove from in-memory manager
+        let mut manager = self.reservation_manager.lock().await;
+        manager.remove_reservation(reservation_id);
+        
+        Ok(())
+    }
+    
+    /// Settle a trade (update balances and positions)
+    pub async fn settle_trade(&self, trade_details: &TradeDetails) -> Result<()> {
+        // Update account balance
+        let cash_impact = match trade_details.side {
+            TradeSide::Buy => -(trade_details.quantity.to_cents() * trade_details.price.to_cents()),
+            TradeSide::Sell => trade_details.quantity.to_cents() * trade_details.price.to_cents(),
+        };
+        
+        sqlx::query!(
+            "UPDATE accounts SET currency_balance = currency_balance + $1, last_updated = NOW() WHERE id = $2",
+            cash_impact,
+            trade_details.account_id
+        )
+        .execute(&self.db_pool)
+        .await?;
+        
+        // Update or create position
+        let existing_position = self.get_position(trade_details.account_id, trade_details.symbol_id).await?;
+        
+        if let Some(mut position) = existing_position {
+            // Update existing position
+            position.update_with_trade(trade_details.side, trade_details.quantity, trade_details.price);
+            
+            sqlx::query!(
+                "UPDATE positions SET quantity = $1, avg_cost = $2, last_updated = NOW() 
+                 WHERE account_id = $3 AND symbol_id = $4",
+                position.quantity.to_cents(),
+                position.avg_cost.to_cents(),
+                trade_details.account_id,
+                trade_details.symbol_id
+            )
+            .execute(&self.db_pool)
+            .await?;
+        } else {
+            // Create new position
+            let position = Position::new(
+                trade_details.account_id,
+                trade_details.symbol_id,
+                trade_details.quantity,
+                trade_details.price,
+            );
+            
+            sqlx::query!(
+                "INSERT INTO positions (account_id, symbol_id, quantity, avg_cost, last_updated) 
+                 VALUES ($1, $2, $3, $4, NOW())",
+                trade_details.account_id,
+                trade_details.symbol_id,
+                position.quantity.to_cents(),
+                position.avg_cost.to_cents()
+            )
+            .execute(&self.db_pool)
+            .await?;
+        }
+        
+        // Record trade in history
+        sqlx::query!(
+            "INSERT INTO trades (account_id, symbol_id, side, quantity, price, order_id, timestamp) 
+             VALUES ($1, $2, $3, $4, $5, $6, NOW())",
+            trade_details.account_id,
+            trade_details.symbol_id,
+            format!("{:?}", trade_details.side),
+            trade_details.quantity.to_cents(),
+            trade_details.price.to_cents(),
+            trade_details.order_id
+        )
+        .execute(&self.db_pool)
+        .await?;
+        
+        Ok(())
+    }
+    
+    /// Get trade history for an account
+    pub async fn get_trade_history(&self, account_id: i64, limit: Option<u32>) -> Result<Vec<Trade>> {
+        let limit = limit.unwrap_or(100) as i64;
+        
+        let rows = sqlx::query!(
+            "SELECT id, symbol_id, side, quantity, price, order_id, timestamp 
+             FROM trades WHERE account_id = $1 ORDER BY timestamp DESC LIMIT $2",
+            account_id,
+            limit
+        )
+        .fetch_all(&self.db_pool)
+        .await?;
+        
+        let trades = rows
+            .into_iter()
+            .map(|row| {
+                let side = match row.side.as_str() {
+                    "Buy" => TradeSide::Buy,
+                    "Sell" => TradeSide::Sell,
+                    _ => TradeSide::Buy, // Default fallback
+                };
+                
+                Trade {
+                    id: row.id,
+                    account_id,
+                    symbol_id: row.symbol_id,
+                    side,
+                    quantity: Balance::from_basis_points(row.quantity),
+                    price: Balance::from_cents(row.price),
+                    timestamp: row.timestamp.unwrap_or_else(|| chrono::Utc::now().naive_utc()),
+                    order_id: row.order_id,
+                }
+            })
+            .collect();
+        
+        Ok(trades)
+    }
+    
+    /// Update fantasy points and wins for an account
+    pub async fn update_fantasy_points_and_wins(&self, account_id: i64) -> Result<()> {
+        let account = self.get_account(account_id).await?;
+        
+        if let (Some(league_id), Some(roster_id)) = (&account.sleeper_league_id, &account.sleeper_roster_id) {
+            // Get season total fantasy points
+            let season_points = self.sleeper_client.get_season_points(league_id, roster_id).await?;
+            
+            // Calculate weekly bonuses (simplified - would need actual implementation)
+            let total_bonus = 0; // Placeholder
+            
+            // Convert to currency: (season_points + bonuses) * conversion_rate
+            let total_currency = (season_points + total_bonus) * self.config.fantasy_points_conversion_rate;
+            
+            // Update account
+            sqlx::query!(
+                "UPDATE accounts SET fantasy_points = $1, currency_balance = $2, last_updated = NOW() WHERE id = $3",
+                season_points as i32,
+                total_currency as i64,
+                account_id
+            )
+            .execute(&self.db_pool)
+            .await?;
+        }
+        
+        Ok(())
+    }
+    
+    /// Clean up expired reservations
+    pub async fn cleanup_expired_reservations(&self) -> Result<()> {
+        // Update expired reservations in database
+        sqlx::query!(
+            "UPDATE reservations SET status = 'expired' WHERE status = 'active' AND expires_at < NOW()"
+        )
+        .execute(&self.db_pool)
+        .await?;
+        
+        // Clean up in-memory manager
+        let mut manager = self.reservation_manager.lock().await;
+        manager.cleanup_expired();
+        
+        Ok(())
+    }
+    
+    /// Health check
+    pub async fn health_check(&self) -> Result<()> {
+        // Check database connectivity
+        sqlx::query!("SELECT 1 as test").fetch_one(&self.db_pool).await?;
+        
+        // Check Redis connectivity
+        let mut conn = self.redis_client.get_async_connection().await?;
+        redis::cmd("PING").query_async::<_, String>(&mut conn).await?;
+        
+        // Check Sleeper API
+        self.sleeper_client.health_check().await?;
+        
+        Ok(())
+    }
+}

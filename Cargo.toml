@@ -12,6 +12,7 @@ members = [
     "engine/order-gateway",
     "engine/player-scraper",
     "engine/player-registry",
+    "engine/account-service",
     "engine/waiver-exchange-service",
     "tools/admin-cli",
     "tools/symbol-coordinator-demo",

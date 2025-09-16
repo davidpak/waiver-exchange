@@ -62,12 +62,12 @@ pub struct MarketData {
     #[allow(dead_code)]
     symbol: u32,
     last_trade_price: Option<u32>,
-    last_trade_qty: Option<u32>,
+    last_trade_qty: Option<u64>,
     last_trade_time: Option<u64>,
     bid_price: Option<u32>,
     ask_price: Option<u32>,
-    bid_qty: Option<u32>,
-    ask_qty: Option<u32>,
+    bid_qty: Option<u64>,
+    ask_qty: Option<u64>,
     trades: Vec<Trade>,
     book_deltas: Vec<BookDelta>,
 }
@@ -77,7 +77,7 @@ struct Trade {
     #[allow(dead_code)]
     price: u32,
     #[allow(dead_code)]
-    qty: u32,
+    qty: u64,
     #[allow(dead_code)]
     side: Side,
     #[allow(dead_code)]
@@ -93,7 +93,7 @@ struct BookDelta {
     #[allow(dead_code)]
     price: u32,
     #[allow(dead_code)]
-    qty: u32,
+    qty: u64,
     #[allow(dead_code)]
     timestamp: u64,
 }
@@ -300,7 +300,7 @@ impl SystemState {
     pub fn get_order_book_data(
         &self,
         symbol_id: u32,
-    ) -> Result<(Vec<(u32, u32)>, Vec<(u32, u32)>), String> {
+    ) -> Result<(Vec<(u32, u64)>, Vec<(u32, u64)>), String> {
         // Step 1: Ensure symbol is active (but don't process ticks yet)
         let coordinator = self.coordinator.lock().map_err(|_| "Failed to lock coordinator")?;
         let _ready_at_tick = coordinator
@@ -522,8 +522,8 @@ fn display_order_book(engine: &whistle::Whistle, market_data: &MarketData) {
 }
 
 fn display_order_book_from_data(
-    asks: &[(u32, u32)],
-    bids: &[(u32, u32)],
+    asks: &[(u32, u64)],
+    bids: &[(u32, u64)],
     market_data: &MarketData,
 ) {
     println!("  📚 Order Book:");
@@ -532,7 +532,7 @@ fn display_order_book_from_data(
     println!("    {} (Top 10 Sells)", "Price | Amount | Total".dimmed());
     for (price, qty) in asks.iter().rev().take(10) {
         // rev() to show highest first
-        let total = price * qty;
+        let total = (*price as u64) * qty;
         println!("    {} | {} | {}", price.to_string().red(), qty, total);
     }
     if asks.is_empty() {
@@ -550,7 +550,7 @@ fn display_order_book_from_data(
     println!("    {} (Top 10 Buys)", "Price | Amount | Total".dimmed());
     for (price, qty) in bids.iter().take(10) {
         // already sorted highest first
-        let total = price * qty;
+        let total = (*price as u64) * qty;
         println!("    {} | {} | {}", price.to_string().green(), qty, total);
     }
     if bids.is_empty() {

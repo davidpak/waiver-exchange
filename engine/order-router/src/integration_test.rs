@@ -263,7 +263,7 @@ fn create_test_message(
     side: Side,
     order_type: OrderType,
     price: Option<u32>,
-    qty: u32,
+    qty: u64,
 ) -> crate::InboundMsgWithSymbol {
     crate::InboundMsgWithSymbol {
         symbol_id,

@@ -414,7 +414,7 @@ impl ExecutionManager {
                     side: side_str.to_string(),
                     order_type: order_type_str.to_string(),
                     price: submitted.price.map(|p| p as u64), // Convert u32 to u64
-                    quantity: submitted.quantity as u64,      // Convert u32 to u64
+                    quantity: submitted.quantity,
                     order_id: submitted.order_id,
                 }
             }

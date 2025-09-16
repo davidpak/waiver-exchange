@@ -372,7 +372,7 @@ impl Whistle {
 
     /// Get order book levels for a given side
     /// Returns a vector of (price, quantity) pairs sorted by price
-    pub fn get_order_book_levels(&self, side: Side) -> Vec<(u32, u32)> {
+    pub fn get_order_book_levels(&self, side: Side) -> Vec<(u32, u64)> {
         let mut levels = Vec::new();
 
         for price_idx in 0..self.dom.ladder_len() as u32 {
@@ -424,7 +424,7 @@ impl Whistle {
                     order.acct = 0;
                     order.side = Side::Buy;
                     order.price_idx = price_idx;
-                    order.qty_open = qty as u32;
+                    order.qty_open = qty;
                     order.ts_norm = 0;
                     order.enq_seq = 0;
                     order.typ = 0; // OrderType::Limit
@@ -438,7 +438,7 @@ impl Whistle {
                         Side::Buy,
                         handle,
                         price_idx,
-                        qty as u32,
+                        qty,
                     );
 
                     tracing::debug!("Restored buy order: price={}, qty={}", price, qty);
@@ -457,7 +457,7 @@ impl Whistle {
                     order.acct = 0;
                     order.side = Side::Sell;
                     order.price_idx = price_idx;
-                    order.qty_open = qty as u32;
+                    order.qty_open = qty;
                     order.ts_norm = 0;
                     order.enq_seq = 0;
                     order.typ = 0; // OrderType::Limit
@@ -471,7 +471,7 @@ impl Whistle {
                         Side::Sell,
                         handle,
                         price_idx,
-                        qty as u32,
+                        qty,
                     );
 
                     tracing::debug!("Restored sell order: price={}, qty={}", price, qty);
@@ -948,7 +948,7 @@ impl Whistle {
     fn emit_lifecycle_events(
         &mut self,
         rejections: Vec<(InboundMsg, RejectReason)>,
-        accepted_order_data: &[(OrderId, u64, Side, u32, u32, u8)],
+        accepted_order_data: &[(OrderId, u64, Side, u32, u64, u8)],
         tick: TickId,
     ) {
         // Emit rejection events

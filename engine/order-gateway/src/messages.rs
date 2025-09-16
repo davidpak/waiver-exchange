@@ -53,7 +53,7 @@ pub struct OrderPlaceRequest {
     pub price: u32,
 
     /// Order quantity
-    pub quantity: u32,
+    pub quantity: u64,
 
     /// Account ID
     pub account_id: String,
@@ -146,7 +146,7 @@ pub struct LastTrade {
     pub price: u32,
 
     /// Trade quantity
-    pub quantity: u32,
+    pub quantity: u64,
 
     /// Trade timestamp
     pub timestamp: u64,
@@ -162,7 +162,7 @@ pub struct OrderStatusUpdate {
     pub status: String,
 
     /// Filled quantity
-    pub filled_quantity: u32,
+    pub filled_quantity: u64,
 
     /// Average fill price
     pub average_price: Option<u32>,

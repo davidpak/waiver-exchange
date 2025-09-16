@@ -3,7 +3,7 @@ use core::fmt;
 
 pub type OrderId = u64;
 pub type AccountId = u64;
-pub type Qty = u32;
+pub type Qty = u64;
 pub type TsNorm = u64;
 pub type EnqSeq = u32;
 
