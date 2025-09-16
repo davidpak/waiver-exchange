@@ -10,6 +10,7 @@ execution-manager = { path = "../../engine/execution-manager" }
 symbol-coordinator = { path = "../../engine/symbol-coordinator" }
 order-router = { path = "../../engine/order-router" }
 analytics-engine = { path = "../../engine/analytics-engine" }
+account-service = { path = "../../engine/account-service" }
 clap = { version = "4.0", features = ["derive"] }
 colored = "2.0"
 serde = { version = "1.0", features = ["derive"] }

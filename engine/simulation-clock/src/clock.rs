@@ -342,7 +342,7 @@ impl SimulationClock {
                         // Process events through ExecutionManager (proper architectural flow)
                         // SimulationClock coordinates with ExecutionManager to process events
                         if let Err(e) =
-                            self.execution_manager.process_events(symbol_id, &outbound_queue)
+                            self.execution_manager.process_events(symbol_id, &outbound_queue).await
                         {
                             tracing::warn!(
                                 "Failed to process events for symbol {}: {:?}",

@@ -31,6 +31,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use whistle::{OutboundQueue, TickId};
+use account_service::{AccountService, trade::TradeDetails, position::TradeSide};
 
 /// ExecutionManager - the central post-match emission and event distribution service
 ///
@@ -50,6 +51,9 @@ pub struct ExecutionManager {
 
     // Persistence integration
     persistence: Arc<dyn PersistenceBackend>,
+
+    // Account service for trade settlement
+    account_service: Arc<AccountService>,
 
     // State tracking (lock-free for hot path compatibility)
     active_symbols: DashMap<u32, SymbolInfo>,
@@ -74,7 +78,7 @@ pub struct SymbolInfo {
 
 impl ExecutionManager {
     /// Create a new ExecutionManager with the specified configuration
-    pub fn new(config: ExecManagerConfig) -> Self {
+    pub fn new(config: ExecManagerConfig, account_service: Arc<AccountService>) -> Self {
         let metrics = Arc::new(MetricsCollector::new());
         let id_allocator = ExecutionIdAllocator::new(config.execution_id_config.clone());
         let normalizer = EventNormalizer::new(config.normalization_config.clone());
@@ -90,6 +94,7 @@ impl ExecutionManager {
             dispatcher,
             tick_tracker,
             persistence: Arc::new(persistence::InMemoryPersistence::with_default_config()),
+            account_service,
             active_symbols: DashMap::new(),
             shutdown_manager,
             start_time: Instant::now(),
@@ -104,6 +109,7 @@ impl ExecutionManager {
     pub fn new_with_persistence(
         config: ExecManagerConfig,
         persistence: Arc<dyn PersistenceBackend>,
+        account_service: Arc<AccountService>,
     ) -> Self {
         let metrics = Arc::new(MetricsCollector::new());
         let id_allocator = ExecutionIdAllocator::new(config.execution_id_config.clone());
@@ -120,6 +126,7 @@ impl ExecutionManager {
             dispatcher,
             tick_tracker,
             persistence,
+            account_service,
             active_symbols: DashMap::new(),
             shutdown_manager,
             start_time: Instant::now(),
@@ -171,7 +178,7 @@ impl ExecutionManager {
     /// and processes them through the normalization and dispatch pipeline.
     ///
     /// This method is designed to work with Arc<ExecutionManager> for hot path compatibility.
-    pub fn process_events(
+    pub async fn process_events(
         &self,
         symbol_id: u32,
         queue: &OutboundQueue,
@@ -232,6 +239,12 @@ impl ExecutionManager {
                         self.total_trades.load(Ordering::Relaxed),
                         self.total_volume.load(Ordering::Relaxed)
                     );
+
+                    // Settle the trade with AccountService
+                    if let Err(e) = self.settle_trade(trade).await {
+                        tracing::error!("Failed to settle trade: {}", e);
+                        return Err(e);
+                    }
                 }
                 _ => {}
             }
@@ -322,6 +335,76 @@ impl ExecutionManager {
     /// Get current metrics for monitoring
     pub fn metrics(&self) -> &MetricsCollector {
         &self.metrics
+    }
+
+    /// Settle a trade by updating account balances and positions
+    async fn settle_trade(&self, trade_event: &TradeEvent) -> Result<(), ExecutionError> {
+        use account_service::Balance;
+        use whistle::Side;
+
+        // Convert Whistle types to AccountService types
+        let price = Balance::from_cents(trade_event.price as i64);
+        let quantity = Balance::from_basis_points(trade_event.quantity as i64);
+        let symbol_id = trade_event.symbol as i64;
+
+        // Determine buy and sell sides
+        let (buy_order_id, sell_order_id) = match trade_event.aggressor_side {
+            Side::Buy => (trade_event.taker_order_id, trade_event.maker_order_id),
+            Side::Sell => (trade_event.maker_order_id, trade_event.taker_order_id),
+        };
+
+        // Get account IDs from order IDs (we'll need to implement this mapping)
+        // For now, we'll use a simple mapping - in production this would come from order metadata
+        let buy_account_id = self.get_account_id_from_order_id(buy_order_id).await?;
+        let sell_account_id = self.get_account_id_from_order_id(sell_order_id).await?;
+
+        // Create trade details for both sides
+        let buy_trade = TradeDetails {
+            account_id: buy_account_id,
+            symbol_id,
+            side: TradeSide::Buy,
+            quantity,
+            price,
+            order_id: buy_order_id as i64,
+        };
+
+        let sell_trade = TradeDetails {
+            account_id: sell_account_id,
+            symbol_id,
+            side: TradeSide::Sell,
+            quantity,
+            price,
+            order_id: sell_order_id as i64,
+        };
+
+        // Settle both trades
+        self.account_service.settle_trade(&buy_trade).await
+            .map_err(|e| ExecutionError::SettlementFailed(format!("Buy trade settlement failed: {}", e)))?;
+
+        self.account_service.settle_trade(&sell_trade).await
+            .map_err(|e| ExecutionError::SettlementFailed(format!("Sell trade settlement failed: {}", e)))?;
+
+        tracing::info!(
+            "Successfully settled trade: {} shares of symbol {} at price {} between accounts {} and {}",
+            trade_event.quantity,
+            trade_event.symbol,
+            trade_event.price,
+            buy_account_id,
+            sell_account_id
+        );
+
+        Ok(())
+    }
+
+    /// Get account ID from order ID (placeholder implementation)
+    /// 
+    /// In a real system, this would query the order metadata or maintain a mapping.
+    /// For now, we'll use a simple hash-based approach for testing.
+    async fn get_account_id_from_order_id(&self, order_id: u64) -> Result<i64, ExecutionError> {
+        // Simple hash-based mapping for testing
+        // In production, this would be a proper database lookup
+        let account_id = (order_id % 1000) as i64 + 1; // Map to account IDs 1-1000
+        Ok(account_id)
     }
 
     /// Get statistics about the current state
@@ -498,6 +581,9 @@ pub enum ExecutionError {
 
     #[error("Persistence failed: {0}")]
     PersistenceFailed(String),
+
+    #[error("Trade settlement failed: {0}")]
+    SettlementFailed(String),
 }
 
 impl From<String> for ExecutionError {
@@ -522,19 +608,77 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_execution_manager_creation() {
+    #[tokio::test]
+    async fn test_execution_manager_creation() {
         let config = create_test_config();
-        let manager = ExecutionManager::new(config);
+        // Create a mock AccountService for testing
+        let account_service = Arc::new(account_service::AccountService::new(
+            account_service::AccountServiceConfig::from_env().unwrap_or_else(|_| {
+                account_service::AccountServiceConfig {
+                    database: account_service::DatabaseConfig {
+                        url: "postgresql://test".to_string(),
+                        max_connections: 10,
+                        min_connections: 1,
+                    },
+                    redis: account_service::RedisConfig {
+                        url: "redis://test".to_string(),
+                    },
+                    oauth: account_service::OAuthConfig {
+                        client_id: "test".to_string(),
+                        client_secret: "test".to_string(),
+                        auth_url: "test".to_string(),
+                        token_url: "test".to_string(),
+                        redirect_url: "test".to_string(),
+                    },
+                    sleeper: account_service::SleeperConfig {
+                        api_base_url: "test".to_string(),
+                    },
+                    fantasy_points_conversion_rate: 10,
+                    reservation_expiry_days: 7,
+                    cache_ttl_seconds: 5,
+                }
+            })
+        ).await.unwrap());
+        
+        let manager = ExecutionManager::new(config, account_service);
 
         assert_eq!(manager.active_symbols.len(), 0);
         assert_eq!(manager.total_events_processed.load(Ordering::Relaxed), 0);
     }
 
-    #[test]
-    fn test_symbol_registration() {
+    #[tokio::test]
+    async fn test_symbol_registration() {
         let config = create_test_config();
-        let manager = ExecutionManager::new(config);
+        // Create a mock AccountService for testing
+        let account_service = Arc::new(account_service::AccountService::new(
+            account_service::AccountServiceConfig::from_env().unwrap_or_else(|_| {
+                account_service::AccountServiceConfig {
+                    database: account_service::DatabaseConfig {
+                        url: "postgresql://test".to_string(),
+                        max_connections: 10,
+                        min_connections: 1,
+                    },
+                    redis: account_service::RedisConfig {
+                        url: "redis://test".to_string(),
+                    },
+                    oauth: account_service::OAuthConfig {
+                        client_id: "test".to_string(),
+                        client_secret: "test".to_string(),
+                        auth_url: "test".to_string(),
+                        token_url: "test".to_string(),
+                        redirect_url: "test".to_string(),
+                    },
+                    sleeper: account_service::SleeperConfig {
+                        api_base_url: "test".to_string(),
+                    },
+                    fantasy_points_conversion_rate: 10,
+                    reservation_expiry_days: 7,
+                    cache_ttl_seconds: 5,
+                }
+            })
+        ).await.unwrap());
+        
+        let manager = ExecutionManager::new(config, account_service);
 
         manager.register_symbol(1);
         assert_eq!(manager.active_symbols.len(), 1);
@@ -548,14 +692,43 @@ mod tests {
         assert!(!manager.active_symbols.contains_key(&1));
     }
 
-    #[test]
-    fn test_unregistered_symbol_error() {
+    #[tokio::test]
+    async fn test_unregistered_symbol_error() {
         let config = create_test_config();
-        let manager = ExecutionManager::new(config);
+        // Create a mock AccountService for testing
+        let account_service = Arc::new(account_service::AccountService::new(
+            account_service::AccountServiceConfig::from_env().unwrap_or_else(|_| {
+                account_service::AccountServiceConfig {
+                    database: account_service::DatabaseConfig {
+                        url: "postgresql://test".to_string(),
+                        max_connections: 10,
+                        min_connections: 1,
+                    },
+                    redis: account_service::RedisConfig {
+                        url: "redis://test".to_string(),
+                    },
+                    oauth: account_service::OAuthConfig {
+                        client_id: "test".to_string(),
+                        client_secret: "test".to_string(),
+                        auth_url: "test".to_string(),
+                        token_url: "test".to_string(),
+                        redirect_url: "test".to_string(),
+                    },
+                    sleeper: account_service::SleeperConfig {
+                        api_base_url: "test".to_string(),
+                    },
+                    fantasy_points_conversion_rate: 10,
+                    reservation_expiry_days: 7,
+                    cache_ttl_seconds: 5,
+                }
+            })
+        ).await.unwrap());
+        
+        let manager = ExecutionManager::new(config, account_service);
 
         // Create a mock queue (we'll need to implement this properly)
         // For now, this test verifies the error handling logic
-        let result = manager.process_events(1, &OutboundQueue::with_default_capacity());
+        let result = manager.process_events(1, &OutboundQueue::with_default_capacity()).await;
         assert!(matches!(result, Err(ExecutionError::UnregisteredSymbol(1))));
     }
 }

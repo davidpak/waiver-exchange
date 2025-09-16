@@ -20,6 +20,7 @@ use order_router::{InboundMsgWithSymbol, OrderRouter, RouterError};
 use player_registry::PlayerRegistry;
 use symbol_coordinator::SymbolCoordinator;
 use whistle::{AccountId, InboundMsg, OrderId, OrderType, Side, TickId};
+use account_service::{AccountService, Balance};
 
 /// WebSocket connection handler
 pub struct WebSocketHandler {
@@ -44,6 +45,9 @@ pub struct WebSocketHandler {
     /// Player registry for mapping player names to symbol IDs
     player_registry: Arc<RwLock<PlayerRegistry>>,
 
+    /// Account service for balance and position validation
+    account_service: Arc<AccountService>,
+
     /// WebSocket sender channel
     sender: Option<mpsc::UnboundedSender<WsMessage>>,
 
@@ -61,6 +65,7 @@ impl WebSocketHandler {
         order_router: Arc<RwLock<OrderRouter>>,
         symbol_coordinator: Arc<SymbolCoordinator>,
         player_registry: Arc<RwLock<PlayerRegistry>>,
+        account_service: Arc<AccountService>,
     ) -> Self {
         Self {
             peer_addr,
@@ -70,6 +75,7 @@ impl WebSocketHandler {
             order_router,
             symbol_coordinator,
             player_registry,
+            account_service,
             sender: None,
             user_session: None,
         }
@@ -186,20 +192,15 @@ impl WebSocketHandler {
         let auth_response = self.auth_manager.authenticate(&auth_request).await?;
 
         if auth_response.authenticated {
-            // Store user session
-            self.user_session = Some(crate::messages::UserSession::new(
-                auth_response.user_id.clone().unwrap_or_default(),
-                auth_response.permissions.clone(),
-                auth_response.rate_limits.clone(),
-            ));
+            // Get the session from AuthManager (which includes the account_id)
+            let session = self.auth_manager.get_session(&auth_request.api_key).await?;
+            self.user_session = Some(session.clone());
 
             // Add to market data broadcaster
-            if let Some(session) = &self.user_session {
-                if let Some(sender) = &self.sender {
-                    self.market_data_broadcaster
-                        .add_client(session.user_id.clone(), sender.clone())
-                        .await;
-                }
+            if let Some(sender) = &self.sender {
+                self.market_data_broadcaster
+                    .add_client(session.user_id.clone(), sender.clone())
+                    .await;
             }
         }
 
@@ -251,8 +252,14 @@ impl WebSocketHandler {
             }
         };
 
+        // Validate order against account balance and position
+        self.validate_order(&order_request, session.account_id).await?;
+
+        // Create reservation for limit orders
+        let _reservation_id = self.create_reservation(&order_request, session.account_id).await?;
+
         // Convert order request to Whistle InboundMsg
-        let order_msg = self.convert_order_request_to_inbound_msg(&order_request)?;
+        let order_msg = self.convert_order_request_to_inbound_msg(&order_request, session.account_id)?;
 
         // Create message with symbol ID for routing
         let symbol_id = self.parse_symbol_id(&order_request.symbol).await?;
@@ -398,12 +405,11 @@ impl WebSocketHandler {
     fn convert_order_request_to_inbound_msg(
         &self,
         request: &OrderPlaceRequest,
+        account_id: i64,
     ) -> GatewayResult<InboundMsg> {
         let order_id = OrderId::from(uuid::Uuid::new_v4().as_u128() as u64);
 
-        let account_id = AccountId::from(request.account_id.parse::<u32>().map_err(|_| {
-            GatewayError::System("Invalid account_id format - must be a number".to_string())
-        })?);
+        let account_id = AccountId::from(account_id as u32);
 
         let side = match request.side.as_str() {
             "BUY" => Side::Buy,
@@ -489,6 +495,120 @@ impl WebSocketHandler {
                 // Fallback to a reasonable tick if SymbolCoordinator is not available
                 warn!("Failed to get current tick from SymbolCoordinator, using fallback");
                 Ok(1000)
+            }
+        }
+    }
+
+    /// Validate order against account balance and position
+    async fn validate_order(&self, order_request: &OrderPlaceRequest, account_id: i64) -> GatewayResult<()> {
+
+        let symbol_id = self.parse_symbol_id(&order_request.symbol).await? as i64;
+        let side = match order_request.side.as_str() {
+            "BUY" => whistle::Side::Buy,
+            "SELL" => whistle::Side::Sell,
+            _ => return Err(GatewayError::System(format!("Invalid side: {}", order_request.side))),
+        };
+
+        let quantity = Balance::from_basis_points(order_request.quantity as i64);
+        let price = match order_request.r#type.as_str() {
+            "MARKET" => {
+                // For market orders, we need to estimate the worst-case price
+                // For now, we'll use a conservative estimate of $1000 per share
+                Balance::from_cents(100000) // $1000
+            }
+            "LIMIT" | "IOC" | "POST_ONLY" => {
+                Balance::from_cents(order_request.price as i64)
+            }
+            _ => return Err(GatewayError::System(format!("Invalid order type: {}", order_request.r#type))),
+        };
+
+        match side {
+            whistle::Side::Buy => {
+                // Validate sufficient balance for buy orders
+                let required_amount = quantity * price.to_cents() / 10000; // Convert to cents
+                let account = self.account_service.get_account(account_id).await
+                    .map_err(|e| GatewayError::System(format!("Failed to get account: {}", e)))?;
+                
+                let available_balance = account.currency_balance.unwrap_or(0);
+                if available_balance < required_amount.basis_points {
+                    return Err(GatewayError::System(format!(
+                        "Insufficient balance: required {} cents, available {} cents",
+                        required_amount.to_cents(),
+                        available_balance / 10000
+                    )));
+                }
+
+                info!("Buy order validated: account {} has sufficient balance", account_id);
+            }
+            whistle::Side::Sell => {
+                // Validate sufficient position for sell orders
+                let position = self.account_service.get_position(account_id, symbol_id).await
+                    .map_err(|e| GatewayError::System(format!("Failed to get position: {}", e)))?;
+                
+                match position {
+                    Some(pos) => {
+                        if pos.quantity < quantity {
+                            return Err(GatewayError::System(format!(
+                                "Insufficient position: required {} shares, available {} shares",
+                                quantity.to_decimal(),
+                                pos.quantity.to_decimal()
+                            )));
+                        }
+                    }
+                    None => {
+                        return Err(GatewayError::System(format!(
+                            "No position found for account {} and symbol {}",
+                            account_id, symbol_id
+                        )));
+                    }
+                }
+
+                info!("Sell order validated: account {} has sufficient position", account_id);
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Create a reservation for limit orders
+    async fn create_reservation(&self, order_request: &OrderPlaceRequest, account_id: i64) -> GatewayResult<Option<u64>> {
+        // Only create reservations for limit orders
+        if order_request.r#type != "LIMIT" {
+            return Ok(None);
+        }
+
+        let side = match order_request.side.as_str() {
+            "BUY" => whistle::Side::Buy,
+            "SELL" => whistle::Side::Sell,
+            _ => return Err(GatewayError::System(format!("Invalid side: {}", order_request.side))),
+        };
+
+        let quantity = Balance::from_basis_points(order_request.quantity as i64);
+        let price = Balance::from_cents(order_request.price as i64);
+
+        match side {
+            whistle::Side::Buy => {
+                // Reserve balance for buy orders
+                let required_amount = quantity * price.to_cents() / 10000;
+                let order_id = order_request.client_order_id
+                    .as_ref()
+                    .and_then(|id| id.parse::<i64>().ok())
+                    .unwrap_or(0);
+                
+                let reservation_id = self.account_service.check_and_reserve_balance(
+                    account_id,
+                    required_amount.basis_points,
+                    order_id,
+                ).await.map_err(|e| GatewayError::System(format!("Failed to create reservation: {}", e)))?;
+
+                info!("Created balance reservation {} for buy order", reservation_id.0);
+                Ok(Some(reservation_id.0))
+            }
+            whistle::Side::Sell => {
+                // For sell orders, we don't need to reserve balance, but we could reserve the position
+                // For now, we'll just return None since the position validation already ensures sufficient shares
+                info!("Sell order - no reservation needed");
+                Ok(None)
             }
         }
     }

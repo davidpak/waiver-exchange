@@ -6,6 +6,7 @@ use tokio::sync::RwLock;
 use tracing::{error, info, warn};
 
 use crate::config::ServiceConfig;
+use account_service::{AccountService, AccountServiceConfig};
 use execution_manager::ExecutionManager;
 use order_gateway::{GatewayConfig, OrderGateway};
 use order_router::OrderRouter;
@@ -36,6 +37,9 @@ pub struct ServiceState {
 
     /// OrderGateway instance
     pub order_gateway: Arc<RwLock<Option<OrderGateway>>>,
+
+    /// AccountService instance
+    pub account_service: Arc<AccountService>,
 
     /// PlayerRegistry instance
     pub player_registry: Arc<RwLock<Option<PlayerRegistry>>>,
@@ -71,11 +75,23 @@ impl ServiceState {
 
         let persistence: Arc<dyn PersistenceBackend> = Arc::new(persistence_backend);
 
+        // Initialize AccountService first (needed by ExecutionManager)
+        info!("Initializing AccountService...");
+        let account_service_config = AccountServiceConfig::from_env()
+            .context("Failed to load AccountService configuration")?;
+        let account_svc = Arc::new(
+            AccountService::new(account_service_config)
+                .await
+                .context("Failed to create AccountService")?
+        );
+        info!("AccountService initialized successfully");
+
         // Initialize ExecutionManager with persistence integration
         info!("Initializing ExecutionManager...");
         let execution_manager = Arc::new(ExecutionManager::new_with_persistence(
             config.execution_manager.clone(),
             persistence.clone(),
+            account_svc.clone(),
         ));
 
         // Initialize SymbolCoordinator (with ExecutionManager reference)
@@ -112,8 +128,12 @@ impl ServiceState {
         // Initialize OrderGateway
         info!("Initializing OrderGateway...");
         let gateway_config = GatewayConfig::default();
-        let order_gateway =
-            OrderGateway::new(gateway_config, symbol_coordinator.clone(), player_registry);
+        let order_gateway = OrderGateway::new(
+            gateway_config,
+            symbol_coordinator.clone(),
+            player_registry,
+            account_svc.clone()
+        );
 
         let service_state = Self {
             config,
@@ -123,6 +143,7 @@ impl ServiceState {
             order_router,
             persistence,
             order_gateway: Arc::new(RwLock::new(Some(order_gateway))),
+            account_service: account_svc,
             player_registry: Arc::new(RwLock::new(None)), // PlayerRegistry is now owned by OrderGateway
             is_running: Arc::new(RwLock::new(false)),
         };

@@ -5,6 +5,7 @@ use crate::AccountServiceError;
 use serde::{Deserialize, Serialize};
 
 /// Sleeper API client
+#[derive(Debug)]
 pub struct SleeperClient {
     config: SleeperConfig,
     client: reqwest::Client,

@@ -20,6 +20,7 @@ persistence = { path = "../persistence" }
 order-gateway = { path = "../order-gateway" }
 player-registry = { path = "../player-registry" }
 whistle = { path = "../whistle" }
+account-service = { path = "../account-service" }
 
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }

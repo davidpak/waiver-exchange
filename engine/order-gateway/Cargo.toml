@@ -59,6 +59,7 @@ symbol-coordinator = { path = "../symbol-coordinator" }
 execution-manager = { path = "../execution-manager" }
 persistence = { path = "../persistence" }
 player-registry = { path = "../player-registry" }
+account-service = { path = "../account-service" }
 
 [dev-dependencies]
 tokio-test = "0.4"

@@ -55,9 +55,6 @@ pub struct OrderPlaceRequest {
     /// Order quantity
     pub quantity: u64,
 
-    /// Account ID
-    pub account_id: String,
-
     /// Client order ID (optional)
     pub client_order_id: Option<String>,
 }
@@ -180,6 +177,9 @@ pub struct UserSession {
     /// User ID
     pub user_id: String,
 
+    /// Account ID associated with this user
+    pub account_id: i64,
+
     /// User permissions
     pub permissions: Vec<String>,
 
@@ -195,9 +195,9 @@ pub struct UserSession {
 
 impl UserSession {
     /// Create a new user session
-    pub fn new(user_id: String, permissions: Vec<String>, rate_limits: RateLimits) -> Self {
+    pub fn new(user_id: String, account_id: i64, permissions: Vec<String>, rate_limits: RateLimits) -> Self {
         let now = std::time::Instant::now();
-        Self { user_id, permissions, rate_limits, start_time: now, last_activity: now }
+        Self { user_id, account_id, permissions, rate_limits, start_time: now, last_activity: now }
     }
 
     /// Update last activity time

@@ -2,6 +2,7 @@
 
 use crate::error::GatewayError;
 use crate::messages::{AuthRequest, AuthResponse, RateLimits};
+use account_service::AccountService;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -109,21 +110,19 @@ pub struct AuthManager {
     /// API key store
     store: Arc<ApiKeyStore>,
 
+    /// Account service for user-to-account mapping
+    account_service: Arc<AccountService>,
+
     /// Active sessions (API key -> session info)
     sessions: Arc<RwLock<HashMap<String, crate::messages::UserSession>>>,
 }
 
-impl Default for AuthManager {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl AuthManager {
     /// Create a new authentication manager
-    pub fn new() -> Self {
+    pub fn new(account_service: Arc<AccountService>) -> Self {
         Self {
             store: Arc::new(ApiKeyStore::new()),
+            account_service,
             sessions: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -133,9 +132,17 @@ impl AuthManager {
         let response = self.store.authenticate(request)?;
 
         if response.authenticated {
-            // Create session
+            let user_id = response.user_id.clone().unwrap_or_default();
+            
+            // Look up account ID for this user
+            let account_id = self.account_service.get_account_id_by_user_id(&user_id)
+                .await
+                .map_err(|e| GatewayError::Authentication(format!("Failed to find account for user {}: {}", user_id, e)))?;
+
+            // Create session with account ID
             let session = crate::messages::UserSession::new(
-                response.user_id.clone().unwrap_or_default(),
+                user_id,
+                account_id,
                 response.permissions.clone(),
                 response.rate_limits.clone(),
             );
@@ -146,6 +153,16 @@ impl AuthManager {
         }
 
         Ok(response)
+    }
+
+    /// Get user session by API key
+    pub async fn get_session(&self, api_key: &str) -> Result<crate::messages::UserSession, GatewayError> {
+        let sessions = self.sessions.read().await;
+        let session = sessions.get(api_key).ok_or_else(|| {
+            GatewayError::Authentication("Session not found".to_string())
+        })?;
+
+        Ok(session.clone())
     }
 
     /// Validate an API key and return user session

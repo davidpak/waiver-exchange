@@ -11,12 +11,13 @@ use std::collections::HashMap;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-// use lazy_static::lazy_static;
+use tokio::sync::OnceCell;
 
 use execution_manager::{ExecManagerConfig, ExecutionManager};
 use order_router::{OrderRouter, RouterConfig};
 use symbol_coordinator::{CoordinatorConfig, SymbolCoordinator, SymbolCoordinatorApi};
 use whistle::{AccountId, EngineEvent, InboundMsg, OrderType, Price, Qty, Side, TickId};
+use account_service::{AccountService, AccountServiceConfig};
 
 #[derive(Parser)]
 #[command(name = "admin-cli")]
@@ -116,12 +117,46 @@ impl Default for SystemState {
 }
 
 impl SystemState {
-    pub fn new() -> Self {
+    pub async fn new() -> Self {
         println!("🚀 Initializing Waiver Exchange System...");
+
+        // Create mock AccountService for admin-cli
+        let account_service_config = AccountServiceConfig::from_env().unwrap_or_else(|_| {
+            AccountServiceConfig {
+                database: account_service::DatabaseConfig {
+                    url: "postgresql://admin:admin@localhost:5432/waiver_exchange".to_string(),
+                    max_connections: 10,
+                    min_connections: 1,
+                },
+                redis: account_service::RedisConfig {
+                    url: "redis://localhost:6379".to_string(),
+                },
+                oauth: account_service::OAuthConfig {
+                    client_id: "admin-cli".to_string(),
+                    client_secret: "admin-cli-secret".to_string(),
+                    auth_url: "https://accounts.google.com/o/oauth2/v2/auth".to_string(),
+                    token_url: "https://oauth2.googleapis.com/token".to_string(),
+                    redirect_url: "http://localhost:8080/auth/callback".to_string(),
+                },
+                sleeper: account_service::SleeperConfig {
+                    api_base_url: "https://api.sleeper.app/v1".to_string(),
+                },
+                fantasy_points_conversion_rate: 10,
+                reservation_expiry_days: 7,
+                cache_ttl_seconds: 5,
+            }
+        });
+        
+        let account_service = Arc::new(
+            AccountService::new(account_service_config)
+                .await
+                .expect("Failed to create AccountService")
+        );
+        println!("✅ AccountService created");
 
         // Create ExecutionManager
         let exec_config = ExecManagerConfig::default();
-        let execution_manager = Arc::new(ExecutionManager::new(exec_config));
+        let execution_manager = Arc::new(ExecutionManager::new(exec_config, account_service));
         println!("✅ ExecutionManager created");
 
         // Create SymbolCoordinator
@@ -332,28 +367,32 @@ impl SystemState {
 }
 
 // Global system state instance
-lazy_static::lazy_static! {
-    pub static ref SYSTEM_STATE: SystemState = SystemState::new();
-}
+static SYSTEM_STATE: OnceCell<SystemState> = OnceCell::const_new();
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let cli = Cli::parse();
+
+    // Initialize system state
+    let system_state = SYSTEM_STATE.get_or_init(|| async {
+        SystemState::new().await
+    }).await;
 
     match cli.command {
         Commands::Dashboard { update_ms: _ } => {
-            run_dashboard_menu();
+            run_dashboard_menu(system_state).await;
         }
         Commands::Interactive => {
-            run_interactive();
+            run_interactive(system_state).await;
         }
         Commands::Analytics { update_ms } => {
-            run_analytics(update_ms);
+            run_analytics(system_state, update_ms).await;
         }
         Commands::Live { update_ms: _ } => {
-            run_live_dashboard_menu();
+            run_live_dashboard_menu(system_state).await;
         }
         Commands::Menu => {
-            run_main_menu();
+            run_main_menu(system_state).await;
         }
     }
 }

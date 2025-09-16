@@ -39,25 +39,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
-name = "admin-cli"
-version = "0.1.0"
-dependencies = [
- "analytics-engine",
- "chrono",
- "clap",
- "colored",
- "execution-manager",
- "fastrand",
- "lazy_static",
- "order-router",
- "serde",
- "serde_json",
- "symbol-coordinator",
- "tokio",
- "whistle",
-]
-
-[[package]]
 name = "ahash"
 version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -532,16 +513,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
 
 [[package]]
-name = "colored"
-version = "2.2.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "117725a109d387c937a1533ce01b450cbde6b88abceea8473c4d7a85853cda3c"
-dependencies = [
- "lazy_static",
- "windows-sys 0.59.0",
-]
-
-[[package]]
 name = "combine"
 version = "4.6.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -935,6 +906,7 @@ dependencies = [
 name = "execution-manager"
 version = "0.1.0"
 dependencies = [
+ "account-service",
  "analytics-engine",
  "chrono",
  "criterion",
@@ -2134,6 +2106,7 @@ dependencies = [
 name = "order-gateway"
 version = "0.1.0"
 dependencies = [
+ "account-service",
  "anyhow",
  "async-trait",
  "chrono",
@@ -3770,16 +3743,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "symbol-coordinator-demo"
-version = "0.1.0"
-dependencies = [
- "execution-manager",
- "order-router",
- "symbol-coordinator",
- "whistle",
-]
-
-[[package]]
 name = "syn"
 version = "1.0.109"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4473,6 +4436,7 @@ dependencies = [
 name = "waiver-exchange-service"
 version = "0.1.0"
 dependencies = [
+ "account-service",
  "anyhow",
  "chrono",
  "clap",

@@ -32,6 +32,7 @@ pub struct Account {
 }
 
 /// AccountService provides account management, balance tracking, and risk validation
+#[derive(Debug)]
 pub struct AccountService {
     db_pool: PgPool,
     redis_client: RedisClient,
@@ -121,6 +122,35 @@ impl AccountService {
         Ok(())
     }
     
+    /// Get account ID by user ID (Google ID or Sleeper user ID)
+    pub async fn get_account_id_by_user_id(&self, user_id: &str) -> Result<i64> {
+        // Try to find by Google ID first
+        if let Ok(account) = sqlx::query_as!(
+            Account,
+            "SELECT * FROM accounts WHERE google_id = $1",
+            user_id
+        )
+        .fetch_one(&self.db_pool)
+        .await
+        {
+            return Ok(account.id);
+        }
+
+        // Try to find by Sleeper user ID
+        if let Ok(account) = sqlx::query_as!(
+            Account,
+            "SELECT * FROM accounts WHERE sleeper_user_id = $1",
+            user_id
+        )
+        .fetch_one(&self.db_pool)
+        .await
+        {
+            return Ok(account.id);
+        }
+
+        Err(AccountServiceError::AccountNotFound { account_id: 0 })
+    }
+
     /// Get account by ID
     pub async fn get_account(&self, account_id: i64) -> Result<Account> {
         let account = sqlx::query_as!(

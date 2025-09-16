@@ -20,6 +20,7 @@ use order_router::{
 };
 use player_registry::PlayerRegistry;
 use symbol_coordinator::{CoordError, SymbolCoordinator, SymbolCoordinatorApi};
+use account_service::AccountService;
 
 /// Adapter to make SymbolCoordinator compatible with OrderRouter's trait
 struct SymbolCoordinatorAdapter {
@@ -75,6 +76,9 @@ pub struct OrderGateway {
     /// Player registry for mapping player names to symbol IDs
     player_registry: Arc<RwLock<PlayerRegistry>>,
 
+    /// Account service for balance and position validation
+    account_service: Arc<AccountService>,
+
     /// Connection count
     connection_count: Arc<RwLock<usize>>,
 
@@ -88,8 +92,9 @@ impl OrderGateway {
         config: GatewayConfig,
         symbol_coordinator: Arc<SymbolCoordinator>,
         player_registry: PlayerRegistry,
+        account_service: Arc<AccountService>,
     ) -> Self {
-        let auth_manager = Arc::new(AuthManager::new());
+        let auth_manager = Arc::new(AuthManager::new(account_service.clone()));
         let rate_limiter = Arc::new(RateLimiter::new(config.rate_limits.clone()));
         let market_data_broadcaster = Arc::new(MarketDataBroadcaster::new());
 
@@ -110,6 +115,7 @@ impl OrderGateway {
             order_router: Arc::new(RwLock::new(order_router)),
             symbol_coordinator,
             player_registry: Arc::new(RwLock::new(player_registry)),
+            account_service,
             connection_count: Arc::new(RwLock::new(0)),
             is_running: Arc::new(RwLock::new(false)),
         }
@@ -186,6 +192,7 @@ impl OrderGateway {
             self.order_router.clone(),
             self.symbol_coordinator.clone(),
             self.player_registry.clone(),
+            self.account_service.clone(),
         );
 
         // Handle the connection

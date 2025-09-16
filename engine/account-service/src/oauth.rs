@@ -6,6 +6,7 @@ use oauth2::{basic::BasicClient, AuthUrl, ClientId, ClientSecret, RedirectUrl, T
 use serde::Deserialize;
 
 /// Google OAuth client
+#[derive(Debug)]
 pub struct GoogleOAuthClient {
     client: BasicClient,
 }
