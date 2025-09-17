@@ -63,7 +63,7 @@ impl Default for AccountServiceConfig {
                 api_base_url: "https://api.sleeper.app/v1".to_string(),
                 api_key: None,
             },
-            fantasy_points_conversion_rate: 10, // $10 per fantasy point
+            fantasy_points_conversion_rate: 1000, // $10 per fantasy point (1000 cents)
             reservation_expiry_days: 7,
             cache_ttl_seconds: 300, // 5 minutes
         }
@@ -73,6 +73,7 @@ impl Default for AccountServiceConfig {
 impl AccountServiceConfig {
     /// Create config from environment variables
     pub fn from_env() -> Result<Self, crate::AccountServiceError> {
+        // Environment variables should be set by the deployment platform
         let database_url = std::env::var("DATABASE_URL")
             .map_err(|_| crate::AccountServiceError::InvalidConfig {
                 message: "DATABASE_URL not set".to_string(),
@@ -104,7 +105,7 @@ impl AccountServiceConfig {
         let sleeper_api_key = std::env::var("SLEEPER_API_KEY").ok();
         
         let fantasy_points_conversion_rate = std::env::var("FANTASY_POINTS_CONVERSION_RATE")
-            .unwrap_or_else(|_| "10".to_string())
+            .unwrap_or_else(|_| "1000".to_string())
             .parse::<u32>()
             .map_err(|_| crate::AccountServiceError::InvalidConfig {
                 message: "Invalid FANTASY_POINTS_CONVERSION_RATE".to_string(),
