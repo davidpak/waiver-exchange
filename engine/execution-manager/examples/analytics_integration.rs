@@ -5,6 +5,7 @@
 use analytics_engine::analytics::{AnalyticsEvent, EventType};
 use analytics_engine::{init_analytics, AnalyticsConfig};
 use execution_manager::{ExecManagerConfig, ExecutionManager};
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -24,7 +25,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create ExecutionManager
     let exec_config = ExecManagerConfig::default();
-    let mut exec_manager = ExecutionManager::new(exec_config);
+    let account_service = Arc::new(account_service::AccountService::new(
+        account_service::AccountServiceConfig::default()
+    ).await?);
+    let mut exec_manager = ExecutionManager::new(exec_config, account_service);
 
     // Connect AnalyticsEngine to ExecutionManager
     exec_manager.set_analytics_sender(analytics_sender);

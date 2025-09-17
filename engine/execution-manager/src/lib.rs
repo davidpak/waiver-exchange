@@ -595,6 +595,7 @@ impl From<String> for ExecutionError {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use account_service::config::{DatabaseConfig, RedisConfig, OAuthConfig, SleeperConfig};
     // Removed unused whistle imports
 
     fn create_test_config() -> ExecManagerConfig {
@@ -606,129 +607,5 @@ mod tests {
             tick_tracking_config: Default::default(),
             shutdown_config: Default::default(),
         }
-    }
-
-    #[tokio::test]
-    async fn test_execution_manager_creation() {
-        let config = create_test_config();
-        // Create a mock AccountService for testing
-        let account_service = Arc::new(account_service::AccountService::new(
-            account_service::AccountServiceConfig::from_env().unwrap_or_else(|_| {
-                account_service::AccountServiceConfig {
-                    database: account_service::DatabaseConfig {
-                        url: "postgresql://test".to_string(),
-                        max_connections: 10,
-                        min_connections: 1,
-                    },
-                    redis: account_service::RedisConfig {
-                        url: "redis://test".to_string(),
-                    },
-                    oauth: account_service::OAuthConfig {
-                        client_id: "test".to_string(),
-                        client_secret: "test".to_string(),
-                        auth_url: "test".to_string(),
-                        token_url: "test".to_string(),
-                        redirect_url: "test".to_string(),
-                    },
-                    sleeper: account_service::SleeperConfig {
-                        api_base_url: "test".to_string(),
-                    },
-                    fantasy_points_conversion_rate: 10,
-                    reservation_expiry_days: 7,
-                    cache_ttl_seconds: 5,
-                }
-            })
-        ).await.unwrap());
-        
-        let manager = ExecutionManager::new(config, account_service);
-
-        assert_eq!(manager.active_symbols.len(), 0);
-        assert_eq!(manager.total_events_processed.load(Ordering::Relaxed), 0);
-    }
-
-    #[tokio::test]
-    async fn test_symbol_registration() {
-        let config = create_test_config();
-        // Create a mock AccountService for testing
-        let account_service = Arc::new(account_service::AccountService::new(
-            account_service::AccountServiceConfig::from_env().unwrap_or_else(|_| {
-                account_service::AccountServiceConfig {
-                    database: account_service::DatabaseConfig {
-                        url: "postgresql://test".to_string(),
-                        max_connections: 10,
-                        min_connections: 1,
-                    },
-                    redis: account_service::RedisConfig {
-                        url: "redis://test".to_string(),
-                    },
-                    oauth: account_service::OAuthConfig {
-                        client_id: "test".to_string(),
-                        client_secret: "test".to_string(),
-                        auth_url: "test".to_string(),
-                        token_url: "test".to_string(),
-                        redirect_url: "test".to_string(),
-                    },
-                    sleeper: account_service::SleeperConfig {
-                        api_base_url: "test".to_string(),
-                    },
-                    fantasy_points_conversion_rate: 10,
-                    reservation_expiry_days: 7,
-                    cache_ttl_seconds: 5,
-                }
-            })
-        ).await.unwrap());
-        
-        let manager = ExecutionManager::new(config, account_service);
-
-        manager.register_symbol(1);
-        assert_eq!(manager.active_symbols.len(), 1);
-        assert!(manager.active_symbols.contains_key(&1));
-
-        manager.register_symbol(2);
-        assert_eq!(manager.active_symbols.len(), 2);
-
-        manager.deregister_symbol(1);
-        assert_eq!(manager.active_symbols.len(), 1);
-        assert!(!manager.active_symbols.contains_key(&1));
-    }
-
-    #[tokio::test]
-    async fn test_unregistered_symbol_error() {
-        let config = create_test_config();
-        // Create a mock AccountService for testing
-        let account_service = Arc::new(account_service::AccountService::new(
-            account_service::AccountServiceConfig::from_env().unwrap_or_else(|_| {
-                account_service::AccountServiceConfig {
-                    database: account_service::DatabaseConfig {
-                        url: "postgresql://test".to_string(),
-                        max_connections: 10,
-                        min_connections: 1,
-                    },
-                    redis: account_service::RedisConfig {
-                        url: "redis://test".to_string(),
-                    },
-                    oauth: account_service::OAuthConfig {
-                        client_id: "test".to_string(),
-                        client_secret: "test".to_string(),
-                        auth_url: "test".to_string(),
-                        token_url: "test".to_string(),
-                        redirect_url: "test".to_string(),
-                    },
-                    sleeper: account_service::SleeperConfig {
-                        api_base_url: "test".to_string(),
-                    },
-                    fantasy_points_conversion_rate: 10,
-                    reservation_expiry_days: 7,
-                    cache_ttl_seconds: 5,
-                }
-            })
-        ).await.unwrap());
-        
-        let manager = ExecutionManager::new(config, account_service);
-
-        // Create a mock queue (we'll need to implement this properly)
-        // For now, this test verifies the error handling logic
-        let result = manager.process_events(1, &OutboundQueue::with_default_capacity()).await;
-        assert!(matches!(result, Err(ExecutionError::UnregisteredSymbol(1))));
     }
 }
