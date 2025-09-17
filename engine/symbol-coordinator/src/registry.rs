@@ -30,7 +30,7 @@ impl SymbolEntry {
         ));
         let engine_cfg = whistle::EngineCfg {
             symbol: symbol_id,
-            price_domain: whistle::PriceDomain { floor: 100, ceil: 10000, tick: 1 },
+            price_domain: whistle::PriceDomain { floor: 100, ceil: 100000, tick: 1 },
             bands: whistle::Bands { mode: whistle::BandMode::Percent(10) },
             batch_max: 100,
             arena_capacity: 1024,
