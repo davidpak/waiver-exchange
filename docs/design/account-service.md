@@ -5,12 +5,14 @@
 The `AccountService` is responsible for managing user accounts, balances, positions, and risk validation in the waiver-exchange system. It provides **deterministic admission** through read-only risk checks on the hot path and **authoritative settlement** by applying fills to cash/positions. It integrates with Google OAuth for authentication, Sleeper API for fantasy points conversion, and provides reservation-based balance management for limit orders.
 
 **Key Features:**
-- User authentication via Google OAuth
-- Fantasy points to currency conversion ($10 per point)
-- Fractional share support (4 decimal precision)
-- Balance reservations for limit orders (7-day expiry)
-- Real-time risk validation
-- Position tracking per symbol
+- **Full OAuth 2.0 Flow**: Google OAuth with refresh token system
+- **Session Management**: JWT access tokens (1 hour) + refresh tokens (30 days)
+- **Fantasy points to currency conversion** ($10 per point)
+- **Fractional share support** (4 decimal precision)
+- **Balance reservations for limit orders** (7-day expiry)
+- **Real-time risk validation**
+- **Position tracking per symbol**
+- **Auto-refresh tokens** for seamless user experience
 
 ### Role in the System
 
@@ -27,7 +29,8 @@ The `AccountService` is responsible for managing user accounts, balances, positi
 - **Risk Validation**: Check sufficient funds, position limits, exposure caps
 - **Trade Settlement**: Update balances and positions after successful trades
 - **Reservation Management**: Reserve balances for limit orders, handle expiry and cancellation
-- **Authentication**: Google OAuth integration and Sleeper username linking
+- **Authentication**: Full Google OAuth 2.0 flow with refresh tokens
+- **Session Management**: JWT tokens, refresh token rotation, secure storage
 - **Fantasy Integration**: Convert fantasy points to currency, update balances weekly
 
 ### Out of Scope
@@ -47,7 +50,34 @@ The `AccountService` is responsible for managing user accounts, balances, positi
 
 ---
 
-## 2. Database Schema
+## 2. OAuth 2.0 Authentication System
+
+### OAuth Flow Overview
+
+The system implements a complete OAuth 2.0 flow with Google, providing secure authentication and session management with refresh tokens for seamless user experience.
+
+**Session Management Strategy:**
+- **Access Tokens (JWT)**: 1 hour lifetime, stored in frontend localStorage
+- **Refresh Tokens**: 30 days lifetime, stored securely in Redis
+- **Auto-refresh**: Seamless token refresh before expiry
+- **User Experience**: Login once, stay logged in for 30 days
+
+**OAuth Endpoints:**
+- `GET /auth/google` - Initiate OAuth flow
+- `POST /auth/callback` - Handle OAuth callback
+- `POST /auth/refresh` - Refresh access token
+- `POST /auth/logout` - Invalidate tokens
+
+**Security Features:**
+- JWT tokens with strong secret keys
+- Refresh token rotation on each use
+- Redis-based secure token storage
+- CSRF protection with state parameters
+- HTTPS-only in production
+
+---
+
+## 3. Database Schema
 
 ### Core Tables
 
@@ -133,8 +163,10 @@ pub struct AccountService {
 }
 
 impl AccountService {
-    // Authentication & Account Management
+    // OAuth Authentication & Account Management
     pub async fn authenticate_with_google(&self, google_token: &str) -> Result<Account, Error>;
+    pub async fn get_account_id_by_user_id(&self, user_id: &str) -> Result<i64, Error>;
+    pub async fn create_account_from_oauth(&self, user_info: GoogleUserInfo) -> Result<Account, Error>;
     pub async fn link_sleeper_league(&self, account_id: u64, username: &str, season: &str) -> Result<Vec<LeagueOption>, Error>;
     pub async fn select_sleeper_league(&self, account_id: u64, league_id: &str) -> Result<(), Error>;
     pub async fn get_account(&self, account_id: u64) -> Result<Account, Error>;
@@ -181,6 +213,15 @@ pub struct Account {
     pub currency_balance: u64, // In cents
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub last_updated: chrono::DateTime<chrono::Utc>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GoogleUserInfo {
+    pub id: String,
+    pub email: String,
+    pub name: String,
+    pub picture: Option<String>,
+    pub verified_email: bool,
 }
 
 #[derive(Debug, Clone)]

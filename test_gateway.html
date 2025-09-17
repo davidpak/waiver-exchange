@@ -1,57 +1,655 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>OrderGateway Test</title>
+    <title>OrderGateway Test - OAuth Integration</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .section { margin: 20px 0; padding: 15px; border: 1px solid #ddd; border-radius: 5px; }
+        .oauth-section { background-color: #f0f8ff; }
+        .websocket-section { background-color: #f0fff0; }
+        button { padding: 10px 15px; margin: 5px; cursor: pointer; }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+        #messages { max-height: 400px; overflow-y: auto; }
+        .message { margin: 5px 0; padding: 10px; border: 1px solid #ccc; font-family: monospace; font-size: 12px; }
+    </style>
 </head>
 <body>
-    <h1>Waiver Exchange OrderGateway Test</h1>
-    <div id="status">Connecting...</div>
-    <div id="messages"></div>
+    <h1>Waiver Exchange OrderGateway Test - OAuth Integration</h1>
+
+    <div class="section">
+        <h2>Service Status</h2>
+        <div id="gateway-status">Checking...</div>
+    </div>
+    
+    <div class="section oauth-section">
+        <h2>Authentication</h2>
+        <div id="auth-status">Not authenticated</div>
+        <button onclick="loginWithGoogle()" id="login-btn">Login with Google</button>
+        <button onclick="logout()" id="logout-btn" style="display:none;">Logout</button>
+        <div id="user-info"></div>
+    </div>
+    
+    <div class="section" id="sleeper-section" style="display:none; background-color: #fff8dc;">
+        <h2>Sleeper Integration</h2>
+        <div id="sleeper-status">Not set up</div>
+        <div id="sleeper-setup" style="display:none;">
+            <p>Please enter your Sleeper username to link your fantasy football account:</p>
+            <input type="text" id="sleeper-username" placeholder="Enter your Sleeper username" style="padding: 8px; margin: 5px; width: 200px;">
+            <button onclick="setupSleeperIntegration()">Setup Sleeper Integration</button>
+        </div>
+        <div id="sleeper-leagues" style="display:none;">
+            <h3>Select Your League</h3>
+            <div id="league-list"></div>
+        </div>
+    </div>
+    
+    <div class="section" id="trading-section" style="display:none;">
+        <h2>Trading</h2>
+        <div id="connection-status">Connecting...</div>
+        
+        <div style="margin: 20px 0;">
+            <h3>Submit Order</h3>
+            <select id="order-type">
+                <option value="buy">Buy</option>
+                <option value="sell">Sell</option>
+            </select>
+            <select id="symbol-select">
+                <option value="764">Josh Allen (764)</option>
+                <option value="589">Lamar Jackson (589)</option>
+                <option value="123">Patrick Mahomes (123)</option>
+            </select>
+            <input type="number" id="quantity" placeholder="Quantity" value="1" min="1">
+            <input type="number" id="price" placeholder="Price (cents)" value="1000" min="1">
+            <button onclick="submitOrder()">Submit Order</button>
+        </div>
+        
+        <div style="margin: 20px 0;">
+            <h3>Account Info</h3>
+            <button onclick="getAccountInfo()">Get Account Info</button>
+            <button onclick="getPositions()">Get Positions</button>
+            <button onclick="getTrades()">Get Trades</button>
+        </div>
+    </div>
+    
+    <div class="section">
+        <h2>Messages</h2>
+        <div id="messages"></div>
+    </div>
     
     <script>
-        const status = document.getElementById('status');
+        // Global variables
+        let ws = null;
+        let authToken = null;
+        let userInfo = null;
+        let accountId = null;
+        let availableLeagues = null;
+        
+        // DOM elements
+        const authStatus = document.getElementById('auth-status');
+        const userInfoDiv = document.getElementById('user-info');
+        const connectionStatus = document.getElementById('connection-status');
         const messages = document.getElementById('messages');
+        const tradingSection = document.getElementById('trading-section');
+        const loginBtn = document.getElementById('login-btn');
+        const logoutBtn = document.getElementById('logout-btn');
+        const gatewayStatus = document.getElementById('gateway-status');
+        const sleeperSection = document.getElementById('sleeper-section');
+        const sleeperStatus = document.getElementById('sleeper-status');
+        const sleeperSetup = document.getElementById('sleeper-setup');
+        const sleeperLeagues = document.getElementById('sleeper-leagues');
+        const leagueList = document.getElementById('league-list');
+
+        // Probe gateway availability (unauthenticated, short-lived WS)
+        function probeGateway() {
+            try {
+                const probe = new WebSocket('ws://localhost:8081');
+                const timeout = setTimeout(() => {
+                    try { probe.close(); } catch (_) {}
+                    updateGatewayStatus('Timeout reaching OrderGateway', 'error');
+                }, 3000);
+
+                probe.onopen = () => {
+                    clearTimeout(timeout);
+                    updateGatewayStatus('Connected to OrderGateway', 'success');
+                    try { probe.close(); } catch (_) {}
+                };
+                probe.onerror = () => {
+                    clearTimeout(timeout);
+                    updateGatewayStatus('OrderGateway not reachable', 'error');
+                };
+                probe.onclose = () => {
+                    // no-op
+                };
+            } catch (e) {
+                updateGatewayStatus('OrderGateway not reachable', 'error');
+            }
+        }
+
+        function updateGatewayStatus(text, className) {
+            gatewayStatus.textContent = text;
+            gatewayStatus.className = className;
+        }
         
-        // Connect to WebSocket
-        const ws = new WebSocket('ws://localhost:8080');
-        
-        ws.onopen = function(event) {
-            status.textContent = 'Connected to OrderGateway';
-            status.style.color = 'green';
+        // Main Login Function - This is what users will click
+        function loginWithGoogle() {
+            addMessage('Starting Google OAuth...', 'info');
             
-            // Test authentication
-            const authMessage = {
-                method: 'auth.login',
-                params: {
-                    api_key: 'ak_test_1234567890abcdef',
-                    api_secret: 'sk_test_abcdef1234567890'
-                },
-                id: 'auth_001'
+            // Redirect to Google OAuth
+            const oauthUrl = 'http://localhost:8082/auth/google';
+            addMessage(`Redirecting to: ${oauthUrl}`, 'info');
+            
+            // Open OAuth in new window
+            const oauthWindow = window.open(oauthUrl, 'oauth', 'width=600,height=600');
+            
+               // Listen for OAuth success message from popup
+               const messageListener = function(event) {
+                   if (event.data && event.data.type === 'oauth_success') {
+                       addMessage('OAuth authentication successful!', 'success');
+                       
+                       // Store the token
+                       authToken = event.data.token;
+                       localStorage.setItem('waiver_exchange_token', authToken);
+                       
+                       // Update UI
+                       updateAuthStatus('Authenticated', 'success');
+                       
+                       // Remove the message listener
+                       window.removeEventListener('message', messageListener);
+                       
+                       // Clear the window close check since we got the token
+                       clearInterval(checkClosed);
+                       
+                       // Automatically connect WebSocket
+                       connectWebSocket();
+                   }
+               };
+            
+            // Add message listener
+            window.addEventListener('message', messageListener);
+            
+            // Listen for OAuth completion (fallback)
+            const checkClosed = setInterval(() => {
+                if (oauthWindow.closed) {
+                    clearInterval(checkClosed);
+                    window.removeEventListener('message', messageListener);
+                    
+                    // Only check authentication if we haven't already received the token
+                    if (!authToken) {
+                        addMessage('OAuth window closed, checking authentication...', 'info');
+                        checkAuthAndConnect();
+                    }
+                }
+            }, 1000);
+        }
+        
+        // Check authentication and automatically connect WebSocket
+        function checkAuthAndConnect() {
+            const storedToken = localStorage.getItem('waiver_exchange_token');
+            const storedUser = localStorage.getItem('waiver_exchange_user');
+            
+            if (storedToken && storedUser) {
+                authToken = storedToken;
+                userInfo = JSON.parse(storedUser);
+                updateAuthStatus('Authenticated', 'success');
+                updateUserInfo(userInfo);
+                addMessage('Authentication successful!', 'success');
+                
+                // Automatically connect WebSocket
+                connectWebSocket();
+            } else {
+                updateAuthStatus('Authentication failed', 'error');
+                addMessage('No authentication found', 'error');
+            }
+        }
+        
+        // Automatically connect WebSocket after authentication
+        function connectWebSocket() {
+            if (!authToken) {
+                addMessage('No authentication token available', 'error');
+                return;
+            }
+            
+            addMessage('Connecting to trading system...', 'info');
+            connectionStatus.textContent = 'Connecting...';
+            connectionStatus.className = 'info';
+            
+            ws = new WebSocket('ws://localhost:8081');
+            
+            ws.onopen = function(event) {
+                connectionStatus.textContent = 'Connected';
+                connectionStatus.className = 'success';
+                addMessage('Connected to trading system', 'success');
+                
+                // Send JWT authentication
+                const authMessage = {
+                    method: 'auth.jwt',
+                    params: {
+                        token: authToken
+                    },
+                    id: 'auth_jwt_001'
+                };
+                
+                ws.send(JSON.stringify(authMessage));
+                addMessage('Authenticating with trading system...', 'info');
             };
             
-            ws.send(JSON.stringify(authMessage));
-        };
+            ws.onmessage = function(event) {
+                const message = JSON.parse(event.data);
+                addMessage(`Received: ${JSON.stringify(message, null, 2)}`, 'info');
+                
+                // Handle authentication response
+                if (message.id === 'auth_jwt_001' && message.result) {
+                    if (message.result.authenticated) {
+                        accountId = message.result.user_id; // Use user_id from the response
+                        addMessage(`Authentication successful! User ID: ${accountId}`, 'success');
+                        updateAuthStatus('Authenticated', 'success');
+                        showTradingInterface();
+                    } else {
+                        addMessage('Authentication failed: ' + (message.result.error || 'Unknown error'), 'error');
+                    }
+                }
+                
+                // Handle OAuth callback
+                if (message.method === 'auth.oauth_callback') {
+                    if (message.result && message.result.token) {
+                        authToken = message.result.token;
+                        userInfo = message.result.user;
+                        
+                        // Store in localStorage
+                        localStorage.setItem('waiver_exchange_token', authToken);
+                        localStorage.setItem('waiver_exchange_user', JSON.stringify(userInfo));
+                        
+                        updateAuthStatus('Authenticated', 'success');
+                        updateUserInfo(userInfo);
+                        addMessage('OAuth authentication successful!', 'success');
+                        
+                        // Automatically connect WebSocket
+                        connectWebSocket();
+                    }
+                }
+                
+                // Handle order responses
+                if (message.method === 'order.submit' && message.result) {
+                    if (message.result.success) {
+                        addMessage(`Order submitted successfully! Order ID: ${message.result.order_id}`, 'success');
+                    } else {
+                        addMessage(`Order failed: ${message.result.error}`, 'error');
+                    }
+                }
+                
+                // Handle account info responses
+                if (message.id === 'check_sleeper_001' && message.result) {
+                    // Check if sleeper integration is complete (has both user_id and league_id)
+                    if (message.result.sleeper_user_id && message.result.sleeper_league_id) {
+                        // Sleeper integration is complete
+                        showSleeperComplete();
+                    } else {
+                        // Need to set up sleeper integration
+                        showSleeperSetup();
+                    }
+                }
+                
+                // Handle sleeper setup response
+                if (message.id === 'setup_sleeper_001') {
+                    if (message.result && message.result.success) {
+                        addMessage('Sleeper integration setup successful!', 'success');
+                        availableLeagues = message.result.leagues;
+                        showSleeperLeagues(availableLeagues);
+                    } else if (message.error) {
+                        addMessage(`Sleeper setup failed: ${message.error.message}`, 'error');
+                        console.error('Sleeper setup error details:', message.error);
+                    } else {
+                        addMessage('Sleeper setup failed: Unknown error', 'error');
+                        console.error('Sleeper setup response:', message);
+                    }
+                }
+                
+                // Handle league selection response
+                if (message.id === 'select_league_001' && message.result) {
+                    if (message.result.success) {
+                        addMessage('League selected successfully!', 'success');
+                        
+                        // Show fantasy points and currency conversion
+                        if (message.result.fantasy_points !== undefined && message.result.currency_balance !== undefined) {
+                            const fantasyPoints = message.result.fantasy_points;
+                            const currencyBalance = message.result.currency_balance;
+                            const conversionRate = message.result.conversion_rate || 1000;
+                            
+                            addMessage(`Fantasy Points: ${fantasyPoints}`, 'info');
+                            addMessage(`Currency Balance: $${(currencyBalance / 100).toFixed(2)} (${fantasyPoints} points × $${(conversionRate / 100).toFixed(2)}/point)`, 'success');
+                        }
+                        
+                        showSleeperComplete();
+                    } else {
+                        addMessage(`League selection failed: ${message.result.error || 'Unknown error'}`, 'error');
+                    }
+                }
+                
+                // Handle account info responses
+                if (message.method === 'account.info' && message.result) {
+                    addMessage(`Account Info: ${JSON.stringify(message.result, null, 2)}`, 'info');
+                }
+                
+                // Handle positions responses
+                if (message.method === 'account.positions' && message.result) {
+                    addMessage(`Positions: ${JSON.stringify(message.result, null, 2)}`, 'info');
+                }
+                
+                // Handle trades responses
+                if (message.method === 'account.trades' && message.result) {
+                    addMessage(`Trades: ${JSON.stringify(message.result, null, 2)}`, 'info');
+                }
+            };
+            
+            ws.onerror = function(error) {
+                connectionStatus.textContent = 'Connection error';
+                connectionStatus.className = 'error';
+                addMessage('Connection error: ' + error, 'error');
+            };
+            
+            ws.onclose = function(event) {
+                connectionStatus.textContent = 'Disconnected';
+                connectionStatus.className = 'error';
+                addMessage('Connection closed', 'error');
+                hideTradingInterface();
+            };
+        }
         
-        ws.onmessage = function(event) {
-            const message = JSON.parse(event.data);
+        // Show trading interface after successful authentication
+        function showTradingInterface() {
+            // Check if sleeper integration is needed first
+            checkSleeperIntegration();
+        }
+        
+        // Check if sleeper integration is set up
+        function checkSleeperIntegration() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                addMessage('WebSocket not connected, cannot check sleeper integration', 'error');
+                return;
+            }
+            
+            // Send request to check if sleeper integration is complete (has both user_id and league_id)
+            const message = {
+                id: 'check_sleeper_001',
+                method: 'account.info',
+                params: {}
+            };
+            
+            ws.send(JSON.stringify(message));
+            addMessage('Checking sleeper integration status...', 'info');
+        }
+        
+        // Hide trading interface
+        function hideTradingInterface() {
+            tradingSection.style.display = 'none';
+            sleeperSection.style.display = 'none';
+            loginBtn.style.display = 'inline-block';
+            logoutBtn.style.display = 'none';
+        }
+        
+        // Setup sleeper integration
+        function setupSleeperIntegration() {
+            const username = document.getElementById('sleeper-username').value.trim();
+            if (!username) {
+                addMessage('Please enter your Sleeper username', 'error');
+                return;
+            }
+            
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                addMessage('WebSocket not connected', 'error');
+                return;
+            }
+            
+            const message = {
+                id: 'setup_sleeper_001',
+                method: 'account.setup_sleeper',
+                params: {
+                    sleeper_username: username
+                }
+            };
+            
+            console.log('Sending sleeper setup message:', message);
+            ws.send(JSON.stringify(message));
+            addMessage(`Setting up Sleeper integration for username: ${username}`, 'info');
+        }
+        
+        // Select a league
+        function selectLeague(leagueId, rosterId, leagueName) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                addMessage('WebSocket not connected', 'error');
+                return;
+            }
+            
+            const message = {
+                id: 'select_league_001',
+                method: 'account.select_league',
+                params: {
+                    league_id: leagueId,
+                    roster_id: rosterId
+                }
+            };
+            
+            ws.send(JSON.stringify(message));
+            addMessage(`Selecting league: ${leagueName}`, 'info');
+        }
+        
+        // Show sleeper setup interface
+        function showSleeperSetup() {
+            sleeperSection.style.display = 'block';
+            sleeperSetup.style.display = 'block';
+            sleeperLeagues.style.display = 'none';
+            sleeperStatus.textContent = 'Setup required';
+            sleeperStatus.className = 'info';
+        }
+        
+        // Show sleeper leagues selection
+        function showSleeperLeagues(leagues) {
+            sleeperSection.style.display = 'block';
+            sleeperSetup.style.display = 'none';
+            sleeperLeagues.style.display = 'block';
+            sleeperStatus.textContent = 'Select your league';
+            sleeperStatus.className = 'info';
+            
+            // Clear previous leagues
+            leagueList.innerHTML = '';
+            
+            // Add league options
+            leagues.forEach(league => {
+                const leagueDiv = document.createElement('div');
+                leagueDiv.style.margin = '10px 0';
+                leagueDiv.style.padding = '10px';
+                leagueDiv.style.border = '1px solid #ddd';
+                leagueDiv.style.borderRadius = '5px';
+                leagueDiv.style.cursor = 'pointer';
+                leagueDiv.onclick = () => selectLeague(league.id, league.roster_id, league.name);
+                
+                leagueDiv.innerHTML = `
+                    <strong>${league.name}</strong><br>
+                    <small>Season: ${league.season} | Roster ID: ${league.roster_id}</small>
+                `;
+                
+                leagueList.appendChild(leagueDiv);
+            });
+        }
+        
+        // Show sleeper integration complete
+        function showSleeperComplete() {
+            sleeperSection.style.display = 'block';
+            sleeperSetup.style.display = 'none';
+            sleeperLeagues.style.display = 'none';
+            sleeperStatus.textContent = 'Sleeper integration complete';
+            sleeperStatus.className = 'success';
+            
+            // Now show the trading interface
+            tradingSection.style.display = 'block';
+            loginBtn.style.display = 'none';
+            logoutBtn.style.display = 'inline-block';
+            addMessage('Trading interface ready!', 'success');
+        }
+        
+        // Logout function
+        function logout() {
+            localStorage.removeItem('waiver_exchange_token');
+            localStorage.removeItem('waiver_exchange_user');
+            authToken = null;
+            userInfo = null;
+            accountId = null;
+            
+            updateAuthStatus('Not authenticated', 'error');
+            userInfoDiv.innerHTML = '';
+            addMessage('Logged out', 'info');
+            
+            if (ws) {
+                ws.close();
+                ws = null;
+            }
+            
+            hideTradingInterface();
+        }
+        
+        // Trading Functions
+        function submitOrder() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                addMessage('Not connected to trading system', 'error');
+                return;
+            }
+            
+            const orderType = document.getElementById('order-type').value;
+            const symbol = document.getElementById('symbol-select').value;
+            const quantity = parseInt(document.getElementById('quantity').value);
+            const price = parseInt(document.getElementById('price').value);
+            
+            const orderMessage = {
+                method: 'order.submit',
+                params: {
+                    account_id: accountId,
+                    symbol: symbol,
+                    side: orderType,
+                    quantity: quantity,
+                    price: price,
+                    order_type: 'limit'
+                },
+                id: 'order_' + Date.now()
+            };
+            
+            ws.send(JSON.stringify(orderMessage));
+            addMessage(`Submitting ${orderType} order: ${quantity} shares of ${symbol} at ${price} cents`, 'info');
+        }
+        
+        function getAccountInfo() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                addMessage('Not connected to trading system', 'error');
+                return;
+            }
+            
+            const message = {
+                method: 'account.info',
+                params: {
+                    account_id: accountId
+                },
+                id: 'account_info_' + Date.now()
+            };
+            
+            ws.send(JSON.stringify(message));
+            addMessage('Requesting account info...', 'info');
+        }
+        
+        function getPositions() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                addMessage('Not connected to trading system', 'error');
+                return;
+            }
+            
+            const message = {
+                method: 'account.positions',
+                params: {
+                    account_id: accountId
+                },
+                id: 'positions_' + Date.now()
+            };
+            
+            ws.send(JSON.stringify(message));
+            addMessage('Requesting positions...', 'info');
+        }
+        
+        function getTrades() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                addMessage('Not connected to trading system', 'error');
+                return;
+            }
+            
+            const message = {
+                method: 'account.trades',
+                params: {
+                    account_id: accountId
+                },
+                id: 'trades_' + Date.now()
+            };
+            
+            ws.send(JSON.stringify(message));
+            addMessage('Requesting trades...', 'info');
+        }
+        
+        // Utility Functions
+        function updateAuthStatus(text, className) {
+            authStatus.textContent = text;
+            authStatus.className = className;
+        }
+        
+        function updateUserInfo(user) {
+            userInfoDiv.innerHTML = `
+                <div><strong>Name:</strong> ${user.name}</div>
+                <div><strong>Email:</strong> ${user.email}</div>
+                <div><strong>ID:</strong> ${user.id}</div>
+            `;
+        }
+        
+        function addMessage(text, type = 'info') {
             const messageDiv = document.createElement('div');
-            messageDiv.textContent = JSON.stringify(message, null, 2);
-            messageDiv.style.border = '1px solid #ccc';
-            messageDiv.style.margin = '5px';
-            messageDiv.style.padding = '10px';
-            messageDiv.style.fontFamily = 'monospace';
-            messageDiv.style.fontSize = '12px';
+            messageDiv.className = `message ${type}`;
+            messageDiv.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
             messages.appendChild(messageDiv);
-        };
+            messages.scrollTop = messages.scrollHeight;
+        }
         
-        ws.onerror = function(error) {
-            status.textContent = 'Connection error: ' + error;
-            status.style.color = 'red';
-        };
+        // Check for OAuth callback in URL
+        function checkOAuthCallback() {
+            const urlParams = new URLSearchParams(window.location.search);
+            const code = urlParams.get('code');
+            const state = urlParams.get('state');
+            
+            if (code) {
+                addMessage(`OAuth callback detected: code=${code}, state=${state}`, 'info');
+                
+                // Send the code to the WebSocket if connected
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    const callbackMessage = {
+                        method: 'auth.oauth_callback',
+                        params: {
+                            code: code,
+                            state: state
+                        },
+                        id: 'oauth_callback_001'
+                    };
+                    
+                    ws.send(JSON.stringify(callbackMessage));
+                    addMessage('Sent OAuth callback to WebSocket', 'info');
+                }
+                
+                // Clean up URL
+                window.history.replaceState({}, document.title, window.location.pathname);
+            }
+        }
         
-        ws.onclose = function(event) {
-            status.textContent = 'Connection closed';
-            status.style.color = 'red';
+        // Initialize
+        window.onload = function() {
+            addMessage('Waiver Exchange Trading Platform loaded', 'info');
+            probeGateway();
+            setInterval(probeGateway, 5000);
+            checkAuthAndConnect();
+            checkOAuthCallback();
         };
     </script>
 </body>
