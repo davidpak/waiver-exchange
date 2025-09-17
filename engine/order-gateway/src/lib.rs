@@ -10,6 +10,7 @@ pub mod error;
 pub mod gateway;
 pub mod market_data_broadcaster;
 pub mod messages;
+pub mod oauth;
 pub mod rate_limiter;
 pub mod websocket_handler;
 

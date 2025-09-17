@@ -42,6 +42,15 @@ pub enum GatewayError {
     ExecutionManager(String),
 }
 
+/// Auth errors for warp rejections
+#[derive(Debug)]
+pub enum AuthError {
+    MissingCode,
+    OAuthFailed,
+}
+
+impl warp::reject::Reject for AuthError {}
+
 impl From<String> for GatewayError {
     fn from(err: String) -> Self {
         GatewayError::System(err)

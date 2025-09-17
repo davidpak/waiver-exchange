@@ -40,5 +40,8 @@ rust_decimal = { version = "1.32", features = ["serde"] }
 # Async runtime
 futures = "0.3"
 
+# Environment variables
+dotenv = "0.15"
+
 [dev-dependencies]
 tokio-test = "0.4"

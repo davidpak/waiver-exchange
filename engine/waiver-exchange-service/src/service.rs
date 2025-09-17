@@ -127,7 +127,8 @@ impl ServiceState {
 
         // Initialize OrderGateway
         info!("Initializing OrderGateway...");
-        let gateway_config = GatewayConfig::default();
+        let mut gateway_config = GatewayConfig::default();
+        gateway_config.server.port = 8081; // Use port 8081 to avoid conflict with pgAdmin
         let order_gateway = OrderGateway::new(
             gateway_config,
             symbol_coordinator.clone(),
