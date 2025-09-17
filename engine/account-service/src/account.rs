@@ -14,6 +14,7 @@ use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use uuid;
 
 /// Account represents a user account
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -101,19 +102,49 @@ impl AccountService {
             Ok(account)
         }
     }
+
+    /// Get or create account by Google user info (without calling Google API again)
+    pub async fn get_or_create_account_by_google_info(&self, google_id: &str, email: &str, name: &str) -> Result<Account> {
+        // Check if account exists
+        let account = sqlx::query_as!(
+            Account,
+            "SELECT * FROM accounts WHERE google_id = $1",
+            google_id
+        )
+        .fetch_optional(&self.db_pool)
+        .await?;
+        
+        if let Some(account) = account {
+            Ok(account)
+        } else {
+            // Create new account
+            let account = sqlx::query_as!(
+                Account,
+                "INSERT INTO accounts (google_id, display_name, created_at, last_updated) 
+                 VALUES ($1, $2, NOW(), NOW()) 
+                 RETURNING *",
+                google_id,
+                name
+            )
+            .fetch_one(&self.db_pool)
+            .await?;
+            
+            Ok(account)
+        }
+    }
     
-    /// Link Sleeper league to account
-    pub async fn link_sleeper_league(&self, _account_id: i64, username: &str, season: &str) -> Result<Vec<LeagueOption>> {
-        self.sleeper_client.get_user_leagues(username, season).await
+    /// Get user's leagues (helper method)
+    pub async fn get_user_leagues(&self, user_id: &str, season: &str) -> Result<Vec<LeagueOption>> {
+        self.sleeper_client.get_user_leagues(user_id, season).await
     }
     
     /// Select a Sleeper league
-    pub async fn select_sleeper_league(&self, account_id: i64, league_id: &str, roster_id: &str) -> Result<()> {
+    pub async fn select_sleeper_league(&self, account_id: i64, league_id: &str, roster_id: u32) -> Result<()> {
         sqlx::query!(
             "UPDATE accounts SET sleeper_league_id = $1, sleeper_roster_id = $2, last_updated = NOW() 
              WHERE id = $3",
             league_id,
-            roster_id,
+            roster_id.to_string(), // Convert u32 to string for database storage
             account_id
         )
         .execute(&self.db_pool)
@@ -242,8 +273,8 @@ impl AccountService {
             });
         }
         
-        // Create reservation
-        let reservation_id = ReservationId(order_id as u64); // Using order_id as reservation_id for simplicity
+        // Create reservation with unique ID (mask high bit to prevent negative numbers)
+        let reservation_id = ReservationId(uuid::Uuid::new_v4().as_u128() as u64 & 0x7FFFFFFFFFFFFFFF);
         let expires_at = Utc::now() + chrono::Duration::days(self.config.reservation_expiry_days as i64);
         let reservation = Reservation::new(
             reservation_id,
@@ -435,12 +466,14 @@ impl AccountService {
         if let (Some(league_id), Some(roster_id)) = (&account.sleeper_league_id, &account.sleeper_roster_id) {
             // Get season total fantasy points
             let season_points = self.sleeper_client.get_season_points(league_id, roster_id).await?;
+            println!("DEBUG: Account {} - season_points: {}, conversion_rate: {}", account_id, season_points, self.config.fantasy_points_conversion_rate);
             
             // Calculate weekly bonuses (simplified - would need actual implementation)
             let total_bonus = 0; // Placeholder
             
             // Convert to currency: (season_points + bonuses) * conversion_rate
-            let total_currency = (season_points + total_bonus) * self.config.fantasy_points_conversion_rate;
+            let total_currency = (season_points as i64 + total_bonus as i64) * self.config.fantasy_points_conversion_rate as i64;
+            println!("DEBUG: Account {} - total_currency calculation: {} * {} = {}", account_id, season_points, self.config.fantasy_points_conversion_rate, total_currency);
             
             // Update account
             sqlx::query!(
@@ -485,5 +518,65 @@ impl AccountService {
         self.sleeper_client.health_check().await?;
         
         Ok(())
+    }
+
+    /// Set up sleeper integration for an account using username
+    pub async fn setup_sleeper_integration(&self, account_id: i64, sleeper_username: &str) -> Result<Vec<LeagueOption>> {
+        // First, get the current NFL state to determine the active season
+        let nfl_state = self.sleeper_client.get_nfl_state().await?;
+        println!("DEBUG: Current NFL state - season: {}, league_season: {}", nfl_state.season, nfl_state.league_season);
+        
+        // Use league_season as it's the active season for leagues
+        let current_season = &nfl_state.league_season;
+        
+        // Get the sleeper user ID from the username
+        let sleeper_user_id = self.sleeper_client.get_user_id(sleeper_username).await?;
+        println!("DEBUG: Found user_id {} for username {}", sleeper_user_id, sleeper_username);
+        
+        // Update the account with the user_id
+        sqlx::query!(
+            "UPDATE accounts SET sleeper_user_id = $1, last_updated = NOW() WHERE id = $2",
+            sleeper_user_id,
+            account_id
+        )
+        .execute(&self.db_pool)
+        .await?;
+        
+        // Get user's leagues for the current active season
+        let mut leagues = self.sleeper_client.get_user_leagues(&sleeper_user_id, current_season).await?;
+        
+        // If no leagues found for current season, try previous season
+        if leagues.is_empty() {
+            println!("DEBUG: No leagues found for season {}, trying previous season {}", current_season, nfl_state.previous_season);
+            leagues = self.sleeper_client.get_user_leagues(&sleeper_user_id, &nfl_state.previous_season).await?;
+        }
+        
+        // If still no leagues, try a few more recent seasons
+        if leagues.is_empty() {
+            let recent_seasons = ["2024", "2023", "2022"];
+            for season in &recent_seasons {
+                if season != current_season && season != &nfl_state.previous_season {
+                    println!("DEBUG: Trying season {}", season);
+                    leagues = self.sleeper_client.get_user_leagues(&sleeper_user_id, season).await?;
+                    if !leagues.is_empty() {
+                        break;
+                    }
+                }
+            }
+        }
+        
+        Ok(leagues)
+    }
+
+    /// Check if account has sleeper integration set up
+    pub async fn has_sleeper_integration(&self, account_id: i64) -> Result<bool> {
+        let row = sqlx::query!(
+            "SELECT sleeper_user_id FROM accounts WHERE id = $1",
+            account_id
+        )
+        .fetch_optional(&self.db_pool)
+        .await?;
+        
+        Ok(row.map_or(false, |r| r.sleeper_user_id.is_some()))
     }
 }

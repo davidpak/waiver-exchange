@@ -3,7 +3,7 @@
 use crate::auth::AuthManager;
 use crate::error::{GatewayError, GatewayResult};
 use crate::market_data_broadcaster::MarketDataBroadcaster;
-use crate::messages::{AuthRequest, Message as ApiMessage, OrderPlaceRequest, OrderPlaceResponse};
+use crate::messages::{AuthRequest, JwtAuthRequest, Message as ApiMessage, OrderPlaceRequest, OrderPlaceResponse};
 use crate::rate_limiter::RateLimiter;
 
 use futures_util::{SinkExt, StreamExt};
@@ -167,11 +167,29 @@ impl WebSocketHandler {
             Some("auth.login") => {
                 self.handle_auth(message).await?;
             }
-            Some("order.place") => {
+            Some("auth.jwt") => {
+                self.handle_jwt_auth(message).await?;
+            }
+            Some("order.place") | Some("order.submit") => {
                 self.handle_order_place(message).await?;
             }
             Some("market_data.subscribe") => {
                 self.handle_market_data_subscribe(message).await?;
+            }
+            Some("account.info") => {
+                self.handle_account_info(message).await?;
+            }
+            Some("account.positions") => {
+                self.handle_account_positions(message).await?;
+            }
+            Some("account.trades") => {
+                self.handle_account_trades(message).await?;
+            }
+            Some("account.setup_sleeper") => {
+                self.handle_setup_sleeper(message).await?;
+            }
+            Some("account.select_league") => {
+                self.handle_select_league(message).await?;
             }
             _ => {
                 return Err(GatewayError::System(format!("Unknown method: {:?}", message.method)));
@@ -194,6 +212,43 @@ impl WebSocketHandler {
         if auth_response.authenticated {
             // Get the session from AuthManager (which includes the account_id)
             let session = self.auth_manager.get_session(&auth_request.api_key).await?;
+            self.user_session = Some(session.clone());
+
+            // Add to market data broadcaster
+            if let Some(sender) = &self.sender {
+                self.market_data_broadcaster
+                    .add_client(session.user_id.clone(), sender.clone())
+                    .await;
+            }
+        }
+
+        let response = ApiMessage {
+            id: message.id,
+            method: None,
+            stream: None,
+            params: None,
+            data: None,
+            result: Some(serde_json::to_value(auth_response)?),
+            error: None,
+        };
+
+        self.send_json_message(response).await?;
+        Ok(())
+    }
+
+    /// Handle JWT authentication
+    async fn handle_jwt_auth(&mut self, message: ApiMessage) -> GatewayResult<()> {
+        let jwt_request: JwtAuthRequest = serde_json::from_value(
+            message
+                .params
+                .ok_or_else(|| GatewayError::System("Missing JWT auth parameters".to_string()))?,
+        )?;
+
+        let auth_response = self.auth_manager.authenticate_jwt(&jwt_request.token).await?;
+
+        if auth_response.authenticated {
+            // Get the session from AuthManager (which includes the account_id)
+            let session = self.auth_manager.get_session_by_jwt(&jwt_request.token).await?;
             self.user_session = Some(session.clone());
 
             // Add to market data broadcaster
@@ -255,11 +310,15 @@ impl WebSocketHandler {
         // Validate order against account balance and position
         self.validate_order(&order_request, session.account_id).await?;
 
+        // Generate a single order ID to use for both reservation and Whistle (mask high bit to prevent negative numbers)
+        let order_id = uuid::Uuid::new_v4().as_u128() as u64 & 0x7FFFFFFFFFFFFFFF;
+
         // Create reservation for limit orders
-        let _reservation_id = self.create_reservation(&order_request, session.account_id).await?;
+        // TEMPORARILY COMMENTED OUT TO TEST SNAPSHOT ISSUE
+        let _reservation_id = self.create_reservation_with_order_id(&order_request, session.account_id, order_id as i64).await?;
 
         // Convert order request to Whistle InboundMsg
-        let order_msg = self.convert_order_request_to_inbound_msg(&order_request, session.account_id)?;
+        let order_msg = self.convert_order_request_to_inbound_msg_with_id(&order_request, session.account_id, order_id)?;
 
         // Create message with symbol ID for routing
         let symbol_id = self.parse_symbol_id(&order_request.symbol).await?;
@@ -273,12 +332,9 @@ impl WebSocketHandler {
             Ok(()) => {
                 info!("Order successfully routed to symbol {}", symbol_id);
 
-                // Trigger tick processing to handle the order (event-driven)
-                // This ensures the order is processed immediately instead of waiting for the next continuous tick
-
-                // Create success response
+                // Create success response using the same order ID that was sent to Whistle
                 let order_response = OrderPlaceResponse {
-                    order_id: format!("ord_{}", uuid::Uuid::new_v4()),
+                    order_id: format!("ord_{}", order_id),
                     status: "ACCEPTED".to_string(),
                     timestamp: chrono::Utc::now().timestamp_millis() as u64,
                     client_order_id: order_request.client_order_id,
@@ -400,24 +456,24 @@ impl WebSocketHandler {
         Ok(())
     }
 
-    /// Convert OrderPlaceRequest to Whistle InboundMsg
+    /// Convert OrderPlaceRequest to Whistle InboundMsg with a specific order ID
     #[allow(clippy::result_large_err)]
-    fn convert_order_request_to_inbound_msg(
+    fn convert_order_request_to_inbound_msg_with_id(
         &self,
         request: &OrderPlaceRequest,
         account_id: i64,
+        order_id: u64,
     ) -> GatewayResult<InboundMsg> {
-        let order_id = OrderId::from(uuid::Uuid::new_v4().as_u128() as u64);
-
+        let order_id = OrderId::from(order_id);
         let account_id = AccountId::from(account_id as u32);
 
-        let side = match request.side.as_str() {
+        let side = match request.side.to_uppercase().as_str() {
             "BUY" => Side::Buy,
             "SELL" => Side::Sell,
             _ => return Err(GatewayError::System(format!("Invalid side: {}", request.side))),
         };
 
-        let order_type = match request.r#type.as_str() {
+        let order_type = match request.r#type.to_uppercase().as_str() {
             "LIMIT" => OrderType::Limit,
             "MARKET" => OrderType::Market,
             "IOC" => OrderType::Ioc,
@@ -440,6 +496,50 @@ impl WebSocketHandler {
         Ok(InboundMsg::submit(
             order_id, account_id, side, order_type, price, quantity, ts_norm, meta, enq_seq,
         ))
+    }
+
+    /// Convert OrderPlaceRequest to Whistle InboundMsg
+    #[allow(clippy::result_large_err)]
+    fn convert_order_request_to_inbound_msg(
+        &self,
+        request: &OrderPlaceRequest,
+        account_id: i64,
+    ) -> GatewayResult<(InboundMsg, OrderId)> {
+        let order_id = OrderId::from(uuid::Uuid::new_v4().as_u128() as u64);
+
+        let account_id = AccountId::from(account_id as u32);
+
+        let side = match request.side.to_uppercase().as_str() {
+            "BUY" => Side::Buy,
+            "SELL" => Side::Sell,
+            _ => return Err(GatewayError::System(format!("Invalid side: {}", request.side))),
+        };
+
+        let order_type = match request.r#type.to_uppercase().as_str() {
+            "LIMIT" => OrderType::Limit,
+            "MARKET" => OrderType::Market,
+            "IOC" => OrderType::Ioc,
+            "POST_ONLY" => OrderType::PostOnly,
+            _ => {
+                return Err(GatewayError::System(format!("Invalid order type: {}", request.r#type)))
+            }
+        };
+
+        let price = match order_type {
+            OrderType::Limit => Some(request.price),
+            _ => None,
+        };
+
+        let quantity = request.quantity;
+        let ts_norm = chrono::Utc::now().timestamp_millis() as u64;
+        let meta = 0u64; // No metadata for now
+        let enq_seq = 0; // Will be stamped by OrderRouter
+
+        let msg = InboundMsg::submit(
+            order_id, account_id, side, order_type, price, quantity, ts_norm, meta, enq_seq,
+        );
+
+        Ok((msg, order_id))
     }
 
     /// Parse symbol string to symbol ID
@@ -503,14 +603,14 @@ impl WebSocketHandler {
     async fn validate_order(&self, order_request: &OrderPlaceRequest, account_id: i64) -> GatewayResult<()> {
 
         let symbol_id = self.parse_symbol_id(&order_request.symbol).await? as i64;
-        let side = match order_request.side.as_str() {
+        let side = match order_request.side.to_uppercase().as_str() {
             "BUY" => whistle::Side::Buy,
             "SELL" => whistle::Side::Sell,
             _ => return Err(GatewayError::System(format!("Invalid side: {}", order_request.side))),
         };
 
         let quantity = Balance::from_basis_points(order_request.quantity as i64);
-        let price = match order_request.r#type.as_str() {
+        let _price = match order_request.r#type.to_uppercase().as_str() {
             "MARKET" => {
                 // For market orders, we need to estimate the worst-case price
                 // For now, we'll use a conservative estimate of $1000 per share
@@ -524,17 +624,17 @@ impl WebSocketHandler {
 
         match side {
             whistle::Side::Buy => {
-                // Validate sufficient balance for buy orders
-                let required_amount = quantity * price.to_cents() / 10000; // Convert to cents
+                // Validate sufficient balance for buy orders: quantity (shares) × price (cents)
+                let required_amount = (order_request.quantity as i64) * (order_request.price as i64);
                 let account = self.account_service.get_account(account_id).await
                     .map_err(|e| GatewayError::System(format!("Failed to get account: {}", e)))?;
                 
                 let available_balance = account.currency_balance.unwrap_or(0);
-                if available_balance < required_amount.basis_points {
+                if available_balance < required_amount {
                     return Err(GatewayError::System(format!(
                         "Insufficient balance: required {} cents, available {} cents",
-                        required_amount.to_cents(),
-                        available_balance / 10000
+                        required_amount,
+                        available_balance
                     )));
                 }
 
@@ -570,34 +670,30 @@ impl WebSocketHandler {
         Ok(())
     }
 
-    /// Create a reservation for limit orders
-    async fn create_reservation(&self, order_request: &OrderPlaceRequest, account_id: i64) -> GatewayResult<Option<u64>> {
+    /// Create a reservation for limit orders with a specific order ID
+    async fn create_reservation_with_order_id(&self, order_request: &OrderPlaceRequest, account_id: i64, order_id: i64) -> GatewayResult<Option<u64>> {
         // Only create reservations for limit orders
-        if order_request.r#type != "LIMIT" {
+        if order_request.r#type.to_uppercase() != "LIMIT" {
             return Ok(None);
         }
 
-        let side = match order_request.side.as_str() {
+        let side = match order_request.side.to_uppercase().as_str() {
             "BUY" => whistle::Side::Buy,
             "SELL" => whistle::Side::Sell,
             _ => return Err(GatewayError::System(format!("Invalid side: {}", order_request.side))),
         };
 
-        let quantity = Balance::from_basis_points(order_request.quantity as i64);
-        let price = Balance::from_cents(order_request.price as i64);
+        let _quantity = Balance::from_basis_points(order_request.quantity as i64);
+        let _price = Balance::from_cents(order_request.price as i64);
 
         match side {
             whistle::Side::Buy => {
-                // Reserve balance for buy orders
-                let required_amount = quantity * price.to_cents() / 10000;
-                let order_id = order_request.client_order_id
-                    .as_ref()
-                    .and_then(|id| id.parse::<i64>().ok())
-                    .unwrap_or(0);
+                // Reserve balance for buy orders: quantity (shares) × price (cents)
+                let required_amount = (order_request.quantity as i64) * (order_request.price as i64);
                 
                 let reservation_id = self.account_service.check_and_reserve_balance(
                     account_id,
-                    required_amount.basis_points,
+                    required_amount,
                     order_id,
                 ).await.map_err(|e| GatewayError::System(format!("Failed to create reservation: {}", e)))?;
 
@@ -611,5 +707,277 @@ impl WebSocketHandler {
                 Ok(None)
             }
         }
+    }
+
+    /// Create a reservation for limit orders
+    async fn create_reservation(&self, order_request: &OrderPlaceRequest, account_id: i64) -> GatewayResult<Option<u64>> {
+        // Only create reservations for limit orders
+        if order_request.r#type.to_uppercase() != "LIMIT" {
+            return Ok(None);
+        }
+
+        let side = match order_request.side.to_uppercase().as_str() {
+            "BUY" => whistle::Side::Buy,
+            "SELL" => whistle::Side::Sell,
+            _ => return Err(GatewayError::System(format!("Invalid side: {}", order_request.side))),
+        };
+
+        let _quantity = Balance::from_basis_points(order_request.quantity as i64);
+        let _price = Balance::from_cents(order_request.price as i64);
+
+        match side {
+            whistle::Side::Buy => {
+                // Reserve balance for buy orders: quantity (shares) × price (cents)
+                let required_amount = (order_request.quantity as i64) * (order_request.price as i64);
+                // Generate a unique order ID for the reservation (not tied to client_order_id)
+                let order_id = uuid::Uuid::new_v4().as_u128() as i64;
+                
+                let reservation_id = self.account_service.check_and_reserve_balance(
+                    account_id,
+                    required_amount,
+                    order_id,
+                ).await.map_err(|e| GatewayError::System(format!("Failed to create reservation: {}", e)))?;
+
+                info!("Created balance reservation {} for buy order", reservation_id.0);
+                Ok(Some(reservation_id.0))
+            }
+            whistle::Side::Sell => {
+                // For sell orders, we don't need to reserve balance, but we could reserve the position
+                // For now, we'll just return None since the position validation already ensures sufficient shares
+                info!("Sell order - no reservation needed");
+                Ok(None)
+            }
+        }
+    }
+
+    /// Handle account info request
+    async fn handle_account_info(&mut self, message: ApiMessage) -> GatewayResult<()> {
+        // Check authentication
+        let session = self
+            .user_session
+            .as_ref()
+            .ok_or_else(|| GatewayError::Authentication("Not authenticated".to_string()))?;
+
+        // Get account information from AccountService
+        let account = self.account_service.get_account(session.account_id).await
+            .map_err(|e| GatewayError::System(format!("Failed to get account: {}", e)))?;
+
+        let account_info = serde_json::json!({
+            "account_id": account.id,
+            "google_id": account.google_id,
+            "display_name": account.display_name,
+            "currency_balance": account.currency_balance,
+            "sleeper_user_id": account.sleeper_user_id,
+            "sleeper_league_id": account.sleeper_league_id,
+            "sleeper_roster_id": account.sleeper_roster_id,
+            "fantasy_points": account.fantasy_points,
+            "weekly_wins": account.weekly_wins,
+            "created_at": account.created_at,
+            "last_updated": account.last_updated
+        });
+
+        let response = ApiMessage {
+            id: message.id,
+            method: None,
+            stream: None,
+            params: None,
+            data: None,
+            result: Some(account_info),
+            error: None,
+        };
+
+        self.send_json_message(response).await?;
+        Ok(())
+    }
+
+    /// Handle account positions request
+    async fn handle_account_positions(&mut self, message: ApiMessage) -> GatewayResult<()> {
+        // Check authentication
+        let session = self
+            .user_session
+            .as_ref()
+            .ok_or_else(|| GatewayError::Authentication("Not authenticated".to_string()))?;
+
+        // Get all positions for the account
+        let positions = self.account_service.get_positions(session.account_id).await
+            .map_err(|e| GatewayError::System(format!("Failed to get positions: {}", e)))?;
+
+        let positions_json: Vec<serde_json::Value> = positions.into_iter().map(|pos| {
+            serde_json::json!({
+                "account_id": pos.account_id,
+                "symbol_id": pos.symbol_id,
+                "quantity": pos.quantity.to_decimal(),
+                "avg_cost": pos.avg_cost.to_cents(),
+                "unrealized_pnl": 0, // TODO: Calculate with current market price
+                "last_updated": pos.last_updated
+            })
+        }).collect();
+
+        let response = ApiMessage {
+            id: message.id,
+            method: None,
+            stream: None,
+            params: None,
+            data: None,
+            result: Some(serde_json::json!({
+                "positions": positions_json
+            })),
+            error: None,
+        };
+
+        self.send_json_message(response).await?;
+        Ok(())
+    }
+
+    /// Handle account trades request
+    async fn handle_account_trades(&mut self, message: ApiMessage) -> GatewayResult<()> {
+        // Check authentication
+        let session = self
+            .user_session
+            .as_ref()
+            .ok_or_else(|| GatewayError::Authentication("Not authenticated".to_string()))?;
+
+        // Get all trades for the account
+        let trades = self.account_service.get_trade_history(session.account_id, None).await
+            .map_err(|e| GatewayError::System(format!("Failed to get trades: {}", e)))?;
+
+        let trades_json: Vec<serde_json::Value> = trades.into_iter().map(|trade| {
+            serde_json::json!({
+                "id": trade.id,
+                "account_id": trade.account_id,
+                "symbol_id": trade.symbol_id,
+                "side": trade.side,
+                "quantity": trade.quantity.to_decimal(),
+                "price": trade.price.to_cents(),
+                "timestamp": trade.timestamp,
+                "order_id": trade.order_id
+            })
+        }).collect();
+
+        let response = ApiMessage {
+            id: message.id,
+            method: None,
+            stream: None,
+            params: None,
+            data: None,
+            result: Some(serde_json::json!({
+                "trades": trades_json
+            })),
+            error: None,
+        };
+
+        self.send_json_message(response).await?;
+        Ok(())
+    }
+
+    /// Handle sleeper integration setup request
+    async fn handle_setup_sleeper(&mut self, message: ApiMessage) -> GatewayResult<()> {
+        // Check authentication
+        let session = self
+            .user_session
+            .as_ref()
+            .ok_or_else(|| GatewayError::Authentication("Not authenticated".to_string()))?;
+
+        // Parse the request
+        let params = message
+            .params
+            .ok_or_else(|| GatewayError::System("Missing sleeper setup parameters".to_string()))?;
+
+        let sleeper_username = params
+            .get("sleeper_username")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| GatewayError::System("Missing sleeper_username field".to_string()))?;
+
+        // Set up sleeper integration and get available leagues
+        let leagues = self.account_service.setup_sleeper_integration(session.account_id, sleeper_username).await
+            .map_err(|e| GatewayError::System(format!("Failed to setup sleeper integration: {}", e)))?;
+
+        let response = ApiMessage {
+            id: message.id,
+            method: None,
+            stream: None,
+            params: None,
+            data: None,
+            result: Some(serde_json::json!({
+                "success": true,
+                "message": "Sleeper integration setup successfully",
+                "leagues": leagues
+            })),
+            error: None,
+        };
+
+        self.send_json_message(response).await?;
+        Ok(())
+    }
+
+    /// Handle league selection request
+    async fn handle_select_league(&mut self, message: ApiMessage) -> GatewayResult<()> {
+        // Check authentication
+        let session = self
+            .user_session
+            .as_ref()
+            .ok_or_else(|| GatewayError::Authentication("Not authenticated".to_string()))?;
+
+        // Parse the request
+        let params = message
+            .params
+            .ok_or_else(|| GatewayError::System("Missing league selection parameters".to_string()))?;
+
+        let league_id = params
+            .get("league_id")
+            .and_then(|v| v.as_str())
+            .ok_or_else(|| GatewayError::System("Missing league_id field".to_string()))?;
+
+        let roster_id = params
+            .get("roster_id")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| GatewayError::System("Missing or invalid roster_id field".to_string()))? as u32;
+
+        // Select the league
+        self.account_service.select_sleeper_league(session.account_id, league_id, roster_id).await
+            .map_err(|e| GatewayError::System(format!("Failed to select league: {}", e)))?;
+
+        // After selecting the league, fetch and convert fantasy points to currency
+        match self.account_service.update_fantasy_points_and_wins(session.account_id).await {
+            Ok(_) => {
+                // Get updated account info to return current balance
+                let account = self.account_service.get_account(session.account_id).await
+                    .map_err(|e| GatewayError::System(format!("Failed to get account: {}", e)))?;
+                
+                let response = ApiMessage {
+                    id: message.id,
+                    method: None,
+                    stream: None,
+                    params: None,
+                    data: None,
+                    result: Some(serde_json::json!({
+                        "success": true,
+                        "message": "League selected successfully",
+                        "fantasy_points": account.fantasy_points.unwrap_or(0),
+                        "currency_balance": account.currency_balance.unwrap_or(0),
+                        "conversion_rate": 1000 // $10 per fantasy point (1000 cents)
+                    })),
+                    error: None,
+                };
+                self.send_json_message(response).await?;
+            }
+            Err(e) => {
+                let response = ApiMessage {
+                    id: message.id,
+                    method: None,
+                    stream: None,
+                    params: None,
+                    data: None,
+                    result: Some(serde_json::json!({
+                        "success": true,
+                        "message": "League selected successfully, but failed to fetch fantasy points",
+                        "error": format!("Fantasy points update failed: {}", e)
+                    })),
+                    error: None,
+                };
+                self.send_json_message(response).await?;
+            }
+        }
+        Ok(())
     }
 }
