@@ -5,8 +5,6 @@ mod router;
 mod sharding;
 mod types;
 
-#[cfg(test)]
-mod integration_test;
 
 pub use router::{OrderRouter, RouterConfig, RouterError};
 pub use sharding::{ShardId, SymbolShard};

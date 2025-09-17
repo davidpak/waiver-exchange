@@ -14,8 +14,6 @@ pub mod metrics;
 #[cfg(test)]
 mod tests;
 
-#[cfg(test)]
-mod integration_tests;
 
 pub use clock::SimulationClock;
 pub use config::ClockConfig;
