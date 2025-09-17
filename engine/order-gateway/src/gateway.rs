@@ -7,11 +7,13 @@ use crate::market_data_broadcaster::MarketDataBroadcaster;
 use crate::rate_limiter::RateLimiter;
 use crate::websocket_handler::WebSocketHandler;
 
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::TcpListener;
 use tokio::sync::RwLock;
 use tracing::{error, info, warn};
+use warp::Filter;
 
 // OrderRouter integration
 use order_router::{
@@ -130,9 +132,6 @@ impl OrderGateway {
 
         info!("Starting OrderGateway on {}", addr);
 
-        // Create TCP listener
-        let listener = TcpListener::bind(addr).await?;
-
         // Mark as running
         {
             let mut running = self.is_running.write().await;
@@ -144,6 +143,9 @@ impl OrderGateway {
         // Start background tasks
         let _cleanup_task = self.start_cleanup_task();
         let _market_data_task = self.start_market_data_task();
+
+        // Create TCP listener
+        let listener = TcpListener::bind(addr).await?;
 
         // Main connection loop
         loop {

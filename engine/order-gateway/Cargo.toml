@@ -15,12 +15,20 @@ tokio-tungstenite = "0.20"
 tungstenite = "0.20"
 futures-util = "0.3"
 
-# HTTP server (for health checks)
+# HTTP server (for health checks and OAuth)
 warp = "0.3"
+hyper = "0.14"
+http = "0.2"
 
 # Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+
+# OAuth and JWT
+jsonwebtoken = "9.2"
+oauth2 = "4.4"
+reqwest = { version = "0.11", features = ["json"] }
+urlencoding = "2.1"
 
 # Logging and tracing
 tracing = "0.1"
@@ -33,6 +41,9 @@ anyhow = "1.0"
 # Configuration
 config = "0.13"
 toml = "0.7"
+
+# Environment variables
+dotenv = "0.15"
 
 # Time handling
 chrono = { version = "0.4", features = ["serde"] }
@@ -63,3 +74,7 @@ account-service = { path = "../account-service" }
 
 [dev-dependencies]
 tokio-test = "0.4"
+
+[[bin]]
+name = "oauth-server"
+path = "src/bin/oauth-server.rs"

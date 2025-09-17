@@ -6,6 +6,29 @@ use account_service::AccountService;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
+use serde::{Deserialize, Serialize};
+
+/// JWT claims structure
+#[derive(Debug, Serialize, Deserialize)]
+pub struct JwtClaims {
+    /// Subject (Account ID)
+    pub sub: String,
+    /// Issuer
+    pub iss: String,
+    /// Audience
+    pub aud: String,
+    /// Expiration time
+    pub exp: u64,
+    /// Issued at
+    pub iat: u64,
+    /// Google user ID
+    pub user_id: String,
+    /// User email
+    pub email: String,
+    /// User name
+    pub name: String,
+}
 
 /// Simple in-memory API key store
 /// In production, this would connect to a proper authentication service
@@ -194,5 +217,75 @@ impl AuthManager {
         let cutoff = std::time::Instant::now() - std::time::Duration::from_secs(max_age_seconds);
 
         sessions.retain(|_, session| session.last_activity > cutoff);
+    }
+
+    /// Authenticate using JWT token
+    pub async fn authenticate_jwt(&self, token: &str) -> Result<AuthResponse, GatewayError> {
+        // Get JWT secret from environment
+        let jwt_secret = std::env::var("JWT_SECRET")
+            .map_err(|_| GatewayError::Authentication("JWT_SECRET not configured".to_string()))?;
+
+        // Decode and validate JWT token
+        let mut validation = Validation::new(Algorithm::HS256);
+        validation.set_audience(&["waiver-exchange-api"]); // Match the audience from OAuth server
+        
+        let token_data = decode::<JwtClaims>(
+            token,
+            &DecodingKey::from_secret(jwt_secret.as_ref()),
+            &validation,
+        ).map_err(|e| GatewayError::Authentication(format!("Invalid JWT token: {}", e)))?;
+
+        let claims = token_data.claims;
+
+        // Check if token is expired
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        
+        if claims.exp < now {
+            return Err(GatewayError::Authentication("JWT token expired".to_string()));
+        }
+
+        // Parse account ID from subject (sub field contains the account ID)
+        let account_id = claims.sub.parse::<i64>()
+            .map_err(|e| GatewayError::Authentication(format!("Invalid account ID in JWT: {}", e)))?;
+
+        // Create session with account ID from JWT claims
+        let session = crate::messages::UserSession::new(
+            claims.user_id.clone(),
+            account_id,
+            vec!["trade".to_string(), "market_data".to_string()], // Default permissions for OAuth users
+            RateLimits {
+                orders_per_second: 100,
+                market_data_per_second: 1000,
+                burst_limit: 10,
+            },
+        );
+
+        // Store session using the JWT token as the key
+        let mut sessions = self.sessions.write().await;
+        sessions.insert(token.to_string(), session);
+
+        Ok(AuthResponse {
+            authenticated: true,
+            user_id: Some(claims.user_id),
+            permissions: vec!["trade".to_string(), "market_data".to_string()],
+            rate_limits: RateLimits {
+                orders_per_second: 100,
+                market_data_per_second: 1000,
+                burst_limit: 10,
+            },
+        })
+    }
+
+    /// Get user session by JWT token
+    pub async fn get_session_by_jwt(&self, token: &str) -> Result<crate::messages::UserSession, GatewayError> {
+        let sessions = self.sessions.read().await;
+        let session = sessions.get(token).ok_or_else(|| {
+            GatewayError::Authentication("JWT session not found".to_string())
+        })?;
+
+        Ok(session.clone())
     }
 }

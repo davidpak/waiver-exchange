@@ -46,7 +46,7 @@ pub struct OrderPlaceRequest {
     pub side: String,
 
     /// Order type (LIMIT/MARKET/IOC/FOK)
-    #[serde(rename = "type")]
+    #[serde(rename = "type", alias = "order_type")]
     pub r#type: String,
 
     /// Order price (for limit orders)
@@ -83,6 +83,13 @@ pub struct AuthRequest {
 
     /// API secret
     pub api_secret: String,
+}
+
+/// JWT authentication request
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct JwtAuthRequest {
+    /// JWT token
+    pub token: String,
 }
 
 /// Authentication response
