@@ -1,0 +1,18 @@
+[package]
+name = "integration-test"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tokio = { version = "1.0", features = ["full"] }
+uuid = { version = "1.0", features = ["v4"] }
+anyhow = "1.0"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid"] }
+
+# Core engine dependencies
+account-service = { path = "../../engine/account-service" }
+execution-manager = { path = "../../engine/execution-manager" }
+order-gateway = { path = "../../engine/order-gateway" }
+symbol-coordinator = { path = "../../engine/symbol-coordinator" }
+whistle = { path = "../../engine/whistle" }
+order-router = { path = "../../engine/order-router" }

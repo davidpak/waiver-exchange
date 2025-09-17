@@ -8,6 +8,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "dotenv",
  "futures",
  "oauth2",
  "redis",
@@ -820,6 +821,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0688c2a7f92e427f44895cd63841bff7b29f8d7a1648b9e7e07a4a365b2e1257"
 
 [[package]]
+name = "dotenv"
+version = "0.15.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "77c90badedccf4105eca100756a0b1289e191f6fcbdadd3cee1d2f614f97da8f"
+
+[[package]]
 name = "dotenvy"
 version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1568,6 +1575,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "integration-test"
+version = "0.1.0"
+dependencies = [
+ "account-service",
+ "anyhow",
+ "execution-manager",
+ "order-gateway",
+ "order-router",
+ "sqlx",
+ "symbol-coordinator",
+ "tokio",
+ "uuid",
+ "whistle",
+]
+
+[[package]]
 name = "io-uring"
 version = "0.7.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1644,6 +1667,21 @@ dependencies = [
  "pest",
  "pest_derive",
  "serde",
+]
+
+[[package]]
+name = "jsonwebtoken"
+version = "9.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5a87cc7a48537badeae96744432de36f4be2b4a34a05a5ef32e9dd8a1c169dde"
+dependencies = [
+ "base64 0.22.1",
+ "js-sys",
+ "pem",
+ "ring",
+ "serde",
+ "serde_json",
+ "simple_asn1",
 ]
 
 [[package]]
@@ -1949,6 +1987,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "num-bigint"
+version = "0.4.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"
+dependencies = [
+ "num-integer",
+ "num-traits",
+]
+
+[[package]]
 name = "num-bigint-dig"
 version = "0.8.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2112,14 +2160,20 @@ dependencies = [
  "chrono",
  "config",
  "dashmap",
+ "dotenv",
  "execution-manager",
  "futures-util",
+ "http 0.2.12",
+ "hyper",
+ "jsonwebtoken",
  "metrics",
  "metrics-exporter-prometheus",
+ "oauth2",
  "order-router",
  "parking_lot",
  "persistence",
  "player-registry",
+ "reqwest",
  "serde",
  "serde_json",
  "symbol-coordinator",
@@ -2131,6 +2185,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "tungstenite 0.20.1",
+ "urlencoding",
  "uuid",
  "warp",
  "whistle",
@@ -2193,6 +2248,16 @@ name = "pathdiff"
 version = "0.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "df94ce210e5bc13cb6651479fa48d14f601d9858cfe0467f43ae157023b938d3"
+
+[[package]]
+name = "pem"
+version = "3.0.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38af38e8470ac9dee3ce1bae1af9c1671fffc44ddfd8bd1d0a3445bf349a8ef3"
+dependencies = [
+ "base64 0.22.1",
+ "serde",
+]
 
 [[package]]
 name = "pem-rfc7468"
@@ -3363,6 +3428,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
 
 [[package]]
+name = "simple_asn1"
+version = "0.6.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "297f631f50729c8c99b84667867963997ec0b50f32b2a7dbcab828ef0541e8bb"
+dependencies = [
+ "num-bigint",
+ "num-traits",
+ "thiserror 2.0.16",
+ "time",
+]
+
+[[package]]
 name = "simulation-clock"
 version = "0.1.0"
 dependencies = [
@@ -4376,6 +4453,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "urlencoding"
+version = "2.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "daf8dba3b7eb870caf1ddeed7bc9d2a049f3cfdfae7cb521b087cc33ae4c49da"
+
+[[package]]
 name = "utf-8"
 version = "0.7.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4441,6 +4524,7 @@ dependencies = [
  "chrono",
  "clap",
  "config",
+ "dotenv",
  "execution-manager",
  "futures",
  "metrics",
