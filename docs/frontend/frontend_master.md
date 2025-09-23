@@ -67,11 +67,11 @@ The frontend is not a toy; it is an **engineering showcase** equal to the backen
 ```
 
 **Hybrid Data Sources:**
-- **Order Book Data:** Latest snapshots (fast, real-time)
-- **Account Data:** PostgreSQL database via AccountService (reliable, complete)
-- **Historical Data:** Price history table (proper time-series data)
-- **Player Metadata:** Sleeper API + Redis cache (cached for performance)
-- **Real-time Updates:** WebSocket streams (price updates, order fills)  
+- **Order Book Data:** Latest snapshots (fast, real-time) ✅ IMPLEMENTED
+- **Account Data:** PostgreSQL database via AccountService (reliable, complete) ✅ IMPLEMENTED
+- **Historical Data:** Price history table (proper time-series data) ✅ IMPLEMENTED
+- **Player Metadata:** JSON file with assigned symbol IDs (fast, reliable) ✅ IMPLEMENTED
+- **Real-time Updates:** REST API polling every 1 second (simple, reliable) ✅ IMPLEMENTED  
 
 ### 4.2 Project Structure
 
@@ -167,26 +167,76 @@ Perf budgets enforced in CI via Playwright + Web Vitals beacons.
 ### 8.1 REST Endpoints
 
 **Account Data:**
-- `GET /api/account/summary` - Account balance, total equity, day change
-- `GET /api/account/positions` - User positions with current market values  
-- `GET /api/account/trades` - Trade history
+- `GET /api/account/summary` - Account balance, total equity, day change ✅ IMPLEMENTED
+- `GET /api/account/equity-history` - Historical equity performance ✅ IMPLEMENTED
+- `WebSocket: account.info` - Account balance and equity ✅ IMPLEMENTED
+- `WebSocket: account.positions` - User positions with current market values ✅ IMPLEMENTED
+- `WebSocket: account.trades` - Trade history ✅ IMPLEMENTED
 
 **Market Data:**
-- `GET /api/snapshot/current` - Latest order book data from snapshots
-- `GET /api/price-history/{symbol}?period=1d&interval=1m` - Historical price data
-- `GET /api/symbol/{symbol}/info` - Player metadata from Sleeper API
+- `GET /api/snapshot/current` - Latest order book data from snapshots ✅ IMPLEMENTED
+- `GET /api/price-history/{symbolId}?period=1d&interval=5m` - Historical price data ✅ IMPLEMENTED
+- `GET /api/symbol/{symbolId}/info` - Player metadata from JSON file ✅ IMPLEMENTED
 
 **Order Management:**
-- `POST /api/orders/place` - Place buy/sell orders
-- `GET /api/orders/active` - Active orders
-- `DELETE /api/orders/{order_id}` - Cancel orders
+- `WebSocket: order.place` - Place buy/sell orders ✅ IMPLEMENTED
+- `WebSocket: order.submit` - Alternative order placement ✅ IMPLEMENTED
+- `WebSocket: market_data.subscribe` - Real-time market data ✅ IMPLEMENTED
 
-### 8.2 WebSocket Streams (Optional)
+**Admin/System:**
+- `POST /api/admin/create-snapshots` - Manually trigger daily equity snapshots ✅ IMPLEMENTED
+- `POST /api/admin/test-scheduler` - Check scheduler status ✅ IMPLEMENTED
 
-**Real-time Updates:**
-- `price_update` - Live price changes
-- `order_fill` - Order execution notifications
-- `account_update` - Balance/position changes
+### 8.2 WebSocket API (Primary for Trading)
+
+**Authentication:**
+- `auth` - API key authentication
+- `auth.jwt` - JWT token authentication
+
+**Order Management:**
+- `order.place` - Place buy/sell orders (primary)
+- `order.submit` - Alternative order placement
+- **Request Format:**
+  ```json
+  {
+    "id": "1",
+    "method": "order.place",
+    "params": {
+      "symbol": "Josh Allen",
+      "side": "BUY",
+      "type": "LIMIT",
+      "price": 35000,
+      "quantity": 100,
+      "client_order_id": "my_order_1"
+    }
+  }
+  ```
+- **Response Format:**
+  ```json
+  {
+    "id": "1",
+    "result": {
+      "order_id": "ord_123456789",
+      "status": "ACCEPTED",
+      "timestamp": 1640995200000,
+      "client_order_id": "my_order_1"
+    }
+  }
+  ```
+
+**Account Data:**
+- `account.info` - Account balance and equity
+- `account.positions` - User positions with current market values
+- `account.trades` - Trade history
+- `account.setup_sleeper` - Setup Sleeper integration
+- `account.select_league` - Select fantasy league
+
+**Market Data:**
+- `market_data.subscribe` - Subscribe to real-time market data
+- **Real-time Updates:**
+  - `price_update` - Live price changes
+  - `order_fill` - Order execution notifications
+  - `account_update` - Balance/position changes
 
 ### 8.3 Data Refresh Strategy
 
@@ -277,7 +327,129 @@ Perf budgets enforced in CI via Playwright + Web Vitals beacons.
 
 ---
 
-## 17. Done-When (MVP Acceptance)
+## 17. Implementation Status & Next Steps
+
+### 17.1 ✅ Ready for Frontend Development (Phase 1)
+
+**Core APIs Implemented:**
+- ✅ **Account Summary**: `GET /api/account/summary` - Live balance, equity, day change
+- ✅ **Equity History**: `GET /api/account/equity-history` - Historical performance data
+- ✅ **Symbol Info**: `GET /api/symbol/{symbolId}/info` - Player metadata with symbol IDs
+- ✅ **Price History**: `GET /api/price-history/{symbolId}?period=1d&interval=5m` - OHLC chart data
+- ✅ **Live Market Data**: `GET /api/snapshot/current` - Real-time order book data
+- ✅ **System Health**: `POST /api/admin/test-scheduler` - Scheduler status monitoring
+
+**Data Sources Ready:**
+- ✅ **467 Players** with assigned symbol IDs in JSON file
+- ✅ **Price History** table with OHLC data for charts
+- ✅ **Daily Equity Snapshots** for performance tracking
+- ✅ **Live Order Book** data from Whistle engine
+- ✅ **Account Data** with real balance and equity calculations
+
+**Frontend Components Ready to Build:**
+- ✅ **Account Summary Widget** - Balance, equity, day change display
+- ✅ **Symbol View Component** - Player info, charts, order buttons
+- ✅ **Price History Charts** - Candlestick charts with multiple timeframes
+- ✅ **Live Market Data** - Real-time price updates via polling
+- ✅ **Equity Performance Charts** - Historical account performance
+
+### 17.2 ✅ Phase 2: Order Management (READY)
+
+**WebSocket APIs Available:**
+- ✅ **Order Placement**: `WebSocket: order.place` - Buy/sell order submission
+- ✅ **Account Positions**: `WebSocket: account.positions` - Current holdings
+- ✅ **Trade History**: `WebSocket: account.trades` - Past transactions
+- ✅ **Account Info**: `WebSocket: account.info` - Balance and equity
+- ✅ **Real-time Updates**: `WebSocket: market_data.subscribe` - Live market data
+
+**Frontend Components Ready to Build:**
+- ✅ **Order Modal** - Buy/sell order form (WebSocket integration)
+- ✅ **Holdings List** - User positions display (WebSocket data)
+- ✅ **Order History** - Past orders and trades (WebSocket data)
+- ✅ **Order Book Widget** - Live bid/ask display (WebSocket streams)
+
+### 17.3 🚀 Development Priority
+
+**Start with Phase 1 (Ready Now):**
+1. **Account Summary Component** - Display balance and equity
+2. **Symbol View Component** - Player info and charts
+3. **Price History Charts** - Candlestick visualization
+4. **Real-time Updates** - 1-second polling implementation
+
+**Then Phase 2 (Ready Now):**
+1. **Order Management** - Buy/sell functionality via WebSocket
+2. **Holdings Display** - User positions via WebSocket
+3. **Order Book** - Live market data via WebSocket
+4. **Trade History** - Transaction records via WebSocket
+
+### 17.4 🛠️ Quick Start Guide
+
+**1. Start Backend Server:**
+```bash
+cd engine/order-gateway
+$env:DATABASE_URL="postgresql://postgres:password@localhost/waiver_exchange"
+cargo run --bin rest_server
+```
+
+**2. Test REST APIs:**
+```bash
+# Account Summary
+curl "http://localhost:8081/api/account/summary?account_id=1"
+
+# Symbol Info (Josh Allen)
+curl "http://localhost:8081/api/symbol/764/info"
+
+# Price History
+curl "http://localhost:8081/api/price-history/764?period=1d&interval=5m"
+
+# Live Market Data
+curl "http://localhost:8081/api/snapshot/current"
+```
+
+**3. Test WebSocket APIs:**
+```bash
+# Connect to WebSocket
+wscat -c ws://localhost:8081/ws
+
+# Authenticate
+{"id": "1", "method": "auth", "params": {"api_key": "test_key", "api_secret": "test_secret"}}
+
+# Place Order
+{"id": "2", "method": "order.place", "params": {"symbol": "Josh Allen", "side": "BUY", "type": "LIMIT", "price": 35000, "quantity": 100}}
+
+# Get Account Info
+{"id": "3", "method": "account.info", "params": {}}
+
+# Get Positions
+{"id": "4", "method": "account.positions", "params": {}}
+```
+
+**4. Frontend Setup:**
+```bash
+# Create React app
+npx create-react-app waiver-exchange-frontend --template typescript
+cd waiver-exchange-frontend
+
+# Install dependencies
+npm install @mantine/core @mantine/hooks @mantine/notifications
+npm install @tanstack/react-query zustand
+npm install lightweight-charts react-grid-layout
+npm install @types/react-grid-layout
+npm install ws @types/ws  # For WebSocket support
+```
+
+**5. Key Implementation Notes:**
+- **All prices in cents** - Convert to dollars for display (divide by 100)
+- **Hybrid approach** - REST for data fetching, WebSocket for trading
+- **Symbol IDs** - Use the 467 assigned symbol IDs from the JSON file
+- **Error handling** - All APIs return standardized error responses
+- **CORS enabled** - Backend allows all origins for development
+- **WebSocket authentication** - Use `auth` method with API key/secret
+- **Order placement** - Use `order.place` WebSocket method for trading
+
+---
+
+## 18. Done-When (MVP Acceptance)
 
 - User can view account summary with real-time balance and P&L.  
 - User can see holdings list with current market values.  

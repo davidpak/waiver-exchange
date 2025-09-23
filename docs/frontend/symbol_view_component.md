@@ -71,12 +71,12 @@ The **Symbol View Component** is the central trading widget that displays detail
 - **Button States**: Default, Hover, Active, Disabled
 
 ### 3.3 Data Sources
-- **Player Info**: `GET /api/symbol/{symbolId}/info` (from JSON file with symbol IDs)
-- **Current Price**: `GET /api/snapshot/current` (from Whistle order book)
-- **Day Change**: Price history calculation (from PostgreSQL)
-- **24H High/Low**: Price history calculation (from PostgreSQL)
-- **Volume**: Price history calculation (from PostgreSQL)
-- **Bot Activity**: Market maker bots provide initial liquidity and price discovery
+- **Player Info**: `GET /api/symbol/{symbolId}/info` (from JSON file with assigned symbol IDs) ✅ IMPLEMENTED
+- **Current Price**: `GET /api/snapshot/current` (from Whistle order book snapshots) ✅ IMPLEMENTED
+- **Day Change**: Price history calculation (from PostgreSQL price_history table) ✅ IMPLEMENTED
+- **24H High/Low**: Price history calculation (from PostgreSQL price_history table) ✅ IMPLEMENTED
+- **Volume**: Price history calculation (from PostgreSQL price_history table) ✅ IMPLEMENTED
+- **Bot Activity**: Market maker bots provide initial liquidity and price discovery ✅ IMPLEMENTED
 
 ---
 
@@ -155,19 +155,25 @@ The **Symbol View Component** is the central trading widget that displays detail
 ```typescript
 // GET /api/symbol/{symbolId}/info
 interface SymbolInfoResponse {
-  sleeper_id: string;
+  player_id: string;
   name: string;
   position: string;
   team: string;
+  projected_points: number;
+  rank: number;
+  symbol_id: number;
   last_updated: string;
 }
 
 // Example Response
 {
-  "sleeper_id": "764",
+  "player_id": "764",
   "name": "Josh Allen",
   "position": "QB",
   "team": "BUF",
+  "projected_points": 350.00,
+  "rank": 1,
+  "symbol_id": 764,
   "last_updated": "2024-01-15T10:30:00Z"
 }
 ```
@@ -268,47 +274,48 @@ interface OrderBookData {
 }
 ```
 
-### 6.4 Order Placement API
+### 6.4 Order Placement API (WebSocket)
 ```typescript
-// POST /api/orders/place
+// WebSocket: order.place
 interface OrderPlaceRequest {
-  symbol_id: string;
+  symbol: string;       // Player name (e.g., "Josh Allen")
   side: 'BUY' | 'SELL';
-  quantity: number;
+  type: 'LIMIT' | 'MARKET' | 'IOC' | 'FOK';
   price: number;        // Price in cents
-  order_type: 'LIMIT' | 'MARKET';
+  quantity: number;     // Number of shares
+  client_order_id?: string;
 }
 
 interface OrderPlaceResponse {
   order_id: string;
-  status: 'ACCEPTED' | 'REJECTED';
-  message?: string;
-  timestamp: string;
+  status: 'ACCEPTED' | 'REJECTED' | 'PENDING';
+  timestamp: number;
+  client_order_id?: string;
 }
 
-// Example Request
+// WebSocket Message Format
 {
-  "symbol_id": "764",
-  "side": "BUY",
-  "quantity": 5,
-  "price": 35000,
-  "order_type": "LIMIT"
+  "id": "1",
+  "method": "order.place",
+  "params": {
+    "symbol": "Josh Allen",
+    "side": "BUY",
+    "type": "LIMIT",
+    "price": 35000,
+    "quantity": 100,
+    "client_order_id": "my_order_1"
+  }
 }
 
-// Example Success Response
+// WebSocket Response Format
 {
-  "order_id": "1234567890",
-  "status": "ACCEPTED",
-  "message": "Order placed successfully",
-  "timestamp": "2024-01-15T10:30:00Z"
-}
-
-// Example Error Response
-{
-  "order_id": null,
-  "status": "REJECTED",
-  "message": "Insufficient funds",
-  "timestamp": "2024-01-15T10:30:00Z"
+  "id": "1",
+  "result": {
+    "order_id": "ord_123456789",
+    "status": "ACCEPTED",
+    "timestamp": 1640995200000,
+    "client_order_id": "my_order_1"
+  }
 }
 ```
 
@@ -317,7 +324,7 @@ interface OrderPlaceResponse {
 // GET /api/account/summary
 interface AccountSummaryResponse {
   account_id: number;
-  currency_balance: number;    // Balance in cents
+  balance: number;             // Balance in cents
   total_equity: number;        // Total equity in cents
   day_change: number;          // Day P&L in cents
   day_change_percent: number;  // Day P&L percentage
@@ -327,17 +334,52 @@ interface AccountSummaryResponse {
 
 // Example Response
 {
-  "account_id": 4,
-  "currency_balance": 253000,
-  "total_equity": 275000,
-  "day_change": 5000,
-  "day_change_percent": 1.85,
-  "buying_power": 253000,
-  "last_updated": "2024-01-15T10:30:00Z"
+  "account_id": 1,
+  "balance": 100000,
+  "total_equity": 106000000,
+  "day_change": 0,
+  "day_change_percent": 0.0,
+  "buying_power": 100000,
+  "last_updated": "2025-09-23T00:48:35.905645Z"
 }
 ```
 
-### 6.6 Error Response Format
+### 6.6 Equity History API
+```typescript
+// GET /api/account/equity-history?account_id=1
+interface EquityHistoryResponse {
+  account_id: number;
+  snapshots: EquitySnapshot[];
+  total_days: number;
+}
+
+interface EquitySnapshot {
+  date: string;                // YYYY-MM-DD format
+  total_equity: number;        // Total equity in cents
+  cash_balance: number;        // Cash balance in cents
+  position_value: number;      // Position value in cents
+  day_change: number;          // Day change in cents
+  day_change_percent: number;  // Day change percentage
+}
+
+// Example Response
+{
+  "account_id": 1,
+  "snapshots": [
+    {
+      "date": "2025-09-23",
+      "total_equity": 106000000,
+      "cash_balance": 100000,
+      "position_value": 105900000,
+      "day_change": 0,
+      "day_change_percent": 0.0
+    }
+  ],
+  "total_days": 1
+}
+```
+
+### 6.7 Error Response Format
 ```typescript
 // Standard error response for all endpoints
 interface ErrorResponse {
@@ -439,11 +481,31 @@ const priceHistory = await fetch(`/api/price-history/${symbolId}?period=1d&inter
 const account = await fetch('/api/account/summary');
 ```
 
-### 7.2 Real-time Updates
+### 7.2 WebSocket Connection Setup
 ```typescript
-// Update every second
+// Connect to WebSocket
+const ws = new WebSocket('ws://localhost:8081/ws');
+
+// Authenticate
+ws.send(JSON.stringify({
+  id: "1",
+  method: "auth",
+  params: { api_key: "test_key", api_secret: "test_secret" }
+}));
+
+// Subscribe to market data
+ws.send(JSON.stringify({
+  id: "2", 
+  method: "market_data.subscribe",
+  params: {}
+}));
+```
+
+### 7.3 Real-time Updates
+```typescript
+// Hybrid approach: REST polling + WebSocket streams
 setInterval(async () => {
-  // Update current price
+  // Update current price via REST
   const snapshot = await fetch('/api/snapshot/current');
   updateCurrentPrice(snapshot.state.order_books[symbolId]);
   
@@ -451,9 +513,52 @@ setInterval(async () => {
   const latestPrice = snapshot.state.order_books[symbolId].last_trade_price;
   addChartDataPoint(latestPrice);
 }, 1000);
+
+// WebSocket real-time updates
+ws.onmessage = (event) => {
+  const message = JSON.parse(event.data);
+  
+  if (message.stream === 'price_update') {
+    updateCurrentPrice(message.data);
+  } else if (message.stream === 'order_fill') {
+    updateAccountBalance(message.data);
+  }
+};
 ```
 
-### 7.3 Timeframe Changes
+### 7.4 Order Placement
+```typescript
+// Place order via WebSocket
+const placeOrder = (side: 'BUY' | 'SELL', price: number, quantity: number) => {
+  ws.send(JSON.stringify({
+    id: Date.now().toString(),
+    method: "order.place",
+    params: {
+      symbol: playerName, // e.g., "Josh Allen"
+      side: side,
+      type: "LIMIT",
+      price: price, // in cents
+      quantity: quantity,
+      client_order_id: `order_${Date.now()}`
+    }
+  }));
+};
+
+// Handle order response
+ws.onmessage = (event) => {
+  const message = JSON.parse(event.data);
+  
+  if (message.result && message.result.order_id) {
+    // Order placed successfully
+    showOrderConfirmation(message.result);
+  } else if (message.error) {
+    // Order rejected
+    showOrderError(message.error);
+  }
+};
+```
+
+### 7.5 Timeframe Changes
 ```typescript
 // Handle timeframe selection
 const handleTimeframeChange = async (timeframe: string) => {
@@ -624,10 +729,15 @@ const useOrderPlacement = () => { /* ... */ };
 - **Bot System**: Market making, initial liquidity, price discovery
 
 ### 13.2 Data Sources
-- **JSON File**: Player metadata with assigned symbol IDs
+- **JSON File**: Player metadata with assigned symbol IDs (467 players ready)
 - **PostgreSQL**: Account data, positions, trades, price history
 - **Redis Cache**: Cached player metadata, price history, current prices
 - **Snapshots**: Live order book data from Whistle engine
+
+**Available Symbol IDs for Testing:**
+- **764**: Josh Allen (QB - BUF) - Primary test symbol
+- **467 total players** with assigned symbol IDs in the system
+- **All symbol IDs** are available via `GET /api/symbol/{symbolId}/info`
 
 ### 13.3 Parent Components
 - **Layout Manager**: Receives symbol selection from parent
