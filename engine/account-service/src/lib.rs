@@ -29,13 +29,13 @@ pub type Result<T> = std::result::Result<T, AccountServiceError>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_balance_creation() {
         let balance = Balance::from_cents(100);
         assert_eq!(balance.to_cents(), 100);
     }
-    
+
     #[test]
     fn test_reservation_id() {
         let id1 = ReservationId(123);

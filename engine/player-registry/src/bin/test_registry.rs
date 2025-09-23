@@ -8,9 +8,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Testing PlayerRegistry...");
 
-    // Create registry and load player data
+    // Create registry and load player data with symbol ID assignment
     let mut registry = PlayerRegistry::new();
-    registry.load_from_file("data/players/season_projections_2025.json").await?;
+    registry.load_and_assign_symbols("data/players/season_projections_2025.json").await?;
 
     info!("Registry loaded with {} symbols", registry.symbol_count());
 

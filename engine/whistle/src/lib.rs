@@ -433,13 +433,7 @@ impl Whistle {
 
                     // Add to order index and book
                     let _ = self.order_index.insert(2, handle); // Use 2 as placeholder order ID (0 and 1 are reserved)
-                    self.book.insert_tail(
-                        &mut self.arena,
-                        Side::Buy,
-                        handle,
-                        price_idx,
-                        qty,
-                    );
+                    self.book.insert_tail(&mut self.arena, Side::Buy, handle, price_idx, qty);
 
                     tracing::debug!("Restored buy order: price={}, qty={}", price, qty);
                 }
@@ -466,13 +460,7 @@ impl Whistle {
 
                     // Add to order index and book
                     let _ = self.order_index.insert(2, handle); // Use 2 as placeholder order ID (0 and 1 are reserved)
-                    self.book.insert_tail(
-                        &mut self.arena,
-                        Side::Sell,
-                        handle,
-                        price_idx,
-                        qty,
-                    );
+                    self.book.insert_tail(&mut self.arena, Side::Sell, handle, price_idx, qty);
 
                     tracing::debug!("Restored sell order: price={}, qty={}", price, qty);
                 }

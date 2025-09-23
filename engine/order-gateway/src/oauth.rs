@@ -20,19 +20,15 @@ impl OAuthConfig {
     pub fn from_env() -> Result<Self, GatewayError> {
         let client_id = std::env::var("GOOGLE_CLIENT_ID")
             .map_err(|_| GatewayError::Authentication("GOOGLE_CLIENT_ID not set".to_string()))?;
-        let client_secret = std::env::var("GOOGLE_CLIENT_SECRET")
-            .map_err(|_| GatewayError::Authentication("GOOGLE_CLIENT_SECRET not set".to_string()))?;
+        let client_secret = std::env::var("GOOGLE_CLIENT_SECRET").map_err(|_| {
+            GatewayError::Authentication("GOOGLE_CLIENT_SECRET not set".to_string())
+        })?;
         let redirect_url = std::env::var("GOOGLE_REDIRECT_URL")
             .map_err(|_| GatewayError::Authentication("GOOGLE_REDIRECT_URL not set".to_string()))?;
         let jwt_secret = std::env::var("JWT_SECRET")
             .map_err(|_| GatewayError::Authentication("JWT_SECRET not set".to_string()))?;
 
-        Ok(Self {
-            client_id,
-            client_secret,
-            redirect_url,
-            jwt_secret,
-        })
+        Ok(Self { client_id, client_secret, redirect_url, jwt_secret })
     }
 }
 
@@ -102,25 +98,13 @@ impl OAuthManager {
         let jwt_encoding_key = EncodingKey::from_secret(config.jwt_secret.as_ref());
         let jwt_decoding_key = DecodingKey::from_secret(config.jwt_secret.as_ref());
 
-        Self {
-            config,
-            account_service,
-            http_client,
-            jwt_encoding_key,
-            jwt_decoding_key,
-        }
+        Self { config, account_service, http_client, jwt_encoding_key, jwt_decoding_key }
     }
 
     /// Generate OAuth authorization URL
     pub fn get_auth_url(&self) -> (String, String) {
         use oauth2::{
-            basic::BasicClient,
-            AuthUrl,
-            ClientId,
-            ClientSecret,
-            RedirectUrl,
-            Scope,
-            TokenUrl,
+            basic::BasicClient, AuthUrl, ClientId, ClientSecret, RedirectUrl, Scope, TokenUrl,
         };
 
         let client = BasicClient::new(
@@ -155,14 +139,21 @@ impl OAuthManager {
         // Exchange code for access token using direct HTTP request
         let oauth_response = self.request_token(code).await?;
         info!("Successfully exchanged code for access token");
-        info!("Access token (first 20 chars): {}", &oauth_response.access_token[..20.min(oauth_response.access_token.len())]);
-        info!("ID token (first 20 chars): {}", &oauth_response.id_token[..20.min(oauth_response.id_token.len())]);
+        info!(
+            "Access token (first 20 chars): {}",
+            &oauth_response.access_token[..20.min(oauth_response.access_token.len())]
+        );
+        info!(
+            "ID token (first 20 chars): {}",
+            &oauth_response.id_token[..20.min(oauth_response.id_token.len())]
+        );
 
         // Debug: Check token info to verify scopes
         self.debug_token_info(&oauth_response.access_token).await?;
 
         // Get user info from Google
-        let user_info = self.get_google_user(&oauth_response.access_token, &oauth_response.id_token).await?;
+        let user_info =
+            self.get_google_user(&oauth_response.access_token, &oauth_response.id_token).await?;
 
         // Create or authenticate account (using user info we already have)
         let account = self
@@ -171,7 +162,10 @@ impl OAuthManager {
             .await
             .map_err(|e| {
                 error!("Failed to get or create account: {}", e);
-                GatewayError::Authentication(format!("Account creation/authentication failed: {}", e))
+                GatewayError::Authentication(format!(
+                    "Account creation/authentication failed: {}",
+                    e
+                ))
             })?;
 
         // Generate JWT access token
@@ -182,11 +176,7 @@ impl OAuthManager {
             user_info.email, account.id
         );
 
-        Ok(OAuthTokenResponse {
-            access_token: jwt_token,
-            account_id: account.id as i64,
-            user_info,
-        })
+        Ok(OAuthTokenResponse { access_token: jwt_token, account_id: account.id as i64, user_info })
     }
 
     /// Request token from Google using direct HTTP request (based on working example)
@@ -202,16 +192,10 @@ impl OAuthManager {
 
         info!("Making token request to Google with params: grant_type=authorization_code, client_id={}", self.config.client_id);
 
-        let response = self
-            .http_client
-            .post(root_url)
-            .form(&params)
-            .send()
-            .await
-            .map_err(|e| {
-                error!("Failed to make token request: {}", e);
-                GatewayError::Authentication(format!("Token request failed: {}", e))
-            })?;
+        let response = self.http_client.post(root_url).form(&params).send().await.map_err(|e| {
+            error!("Failed to make token request: {}", e);
+            GatewayError::Authentication(format!("Token request failed: {}", e))
+        })?;
 
         let status = response.status();
         let response_text = response.text().await.unwrap_or_default();
@@ -220,8 +204,8 @@ impl OAuthManager {
         info!("Google token response body: {}", response_text);
 
         if status.is_success() {
-            let oauth_response: OAuthResponse = serde_json::from_str(&response_text)
-                .map_err(|e| {
+            let oauth_response: OAuthResponse =
+                serde_json::from_str(&response_text).map_err(|e| {
                     error!("Failed to parse token response: {}", e);
                     error!("Response was: {}", response_text);
                     GatewayError::Authentication(format!("Failed to parse token response: {}", e))
@@ -257,11 +241,18 @@ impl OAuthManager {
     }
 
     /// Get user info from Google API using OIDC endpoint only
-    async fn get_google_user(&self, access_token: &str, _id_token: &str) -> GatewayResult<GoogleUserResult> {
+    async fn get_google_user(
+        &self,
+        access_token: &str,
+        _id_token: &str,
+    ) -> GatewayResult<GoogleUserResult> {
         use reqwest::header::WWW_AUTHENTICATE;
 
         info!("Requesting user info from Google OIDC API");
-        info!("Using access token (first 20 chars): {}", &access_token[..20.min(access_token.len())]);
+        info!(
+            "Using access token (first 20 chars): {}",
+            &access_token[..20.min(access_token.len())]
+        );
 
         let resp = self
             .http_client
@@ -273,7 +264,12 @@ impl OAuthManager {
 
         let status = resp.status();
         if !status.is_success() {
-            let www = resp.headers().get(WWW_AUTHENTICATE).and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+            let www = resp
+                .headers()
+                .get(WWW_AUTHENTICATE)
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("")
+                .to_string();
             let body = resp.text().await.unwrap_or_default();
             return Err(GatewayError::Authentication(format!(
                 "Google userinfo failed: status={} www-auth='{}' body='{}'",
@@ -281,7 +277,8 @@ impl OAuthManager {
             )));
         }
 
-        resp.json::<GoogleUserResult>().await
+        resp.json::<GoogleUserResult>()
+            .await
             .map_err(|e| GatewayError::Authentication(format!("parse userinfo failed: {}", e)))
     }
 
@@ -291,10 +288,7 @@ impl OAuthManager {
         account: &Account,
         user_info: &GoogleUserResult,
     ) -> GatewayResult<String> {
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
 
         let claims = JwtClaims {
             sub: account.id.to_string(),
@@ -307,27 +301,23 @@ impl OAuthManager {
             name: user_info.name.clone(),
         };
 
-        encode(&Header::new(Algorithm::HS256), &claims, &self.jwt_encoding_key)
-            .map_err(|e| {
-                error!("Failed to generate JWT token: {}", e);
-                GatewayError::Authentication(format!("JWT generation failed: {}", e))
-            })
+        encode(&Header::new(Algorithm::HS256), &claims, &self.jwt_encoding_key).map_err(|e| {
+            error!("Failed to generate JWT token: {}", e);
+            GatewayError::Authentication(format!("JWT generation failed: {}", e))
+        })
     }
 
     /// Validate JWT token
     pub fn validate_jwt_token(&self, token: &str) -> GatewayResult<JwtClaims> {
         let validation = Validation::new(Algorithm::HS256);
-        let token_data = decode::<JwtClaims>(token, &self.jwt_decoding_key, &validation)
-            .map_err(|e| {
+        let token_data =
+            decode::<JwtClaims>(token, &self.jwt_decoding_key, &validation).map_err(|e| {
                 warn!("JWT validation failed: {}", e);
                 GatewayError::Authentication(format!("Invalid token: {}", e))
             })?;
 
         // Check if token is expired
-        let now = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
+        let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
         if token_data.claims.exp < now {
             return Err(GatewayError::Authentication("Token expired".to_string()));
         }

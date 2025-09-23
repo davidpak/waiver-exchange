@@ -65,7 +65,7 @@ impl SymbolCoordinator {
         EngineCfg {
             symbol: symbol_id,
             price_domain: PriceDomain { floor: 100, ceil: 100000, tick: 1 }, // $1.00 to $1000.00, $0.01 tick
-            bands: Bands { mode: BandMode::Percent(10) },                   // 10% bands
+            bands: Bands { mode: BandMode::Percent(10) },                    // 10% bands
             batch_max: spsc_depth as u32,
             arena_capacity: 1024, // Max 1024 open orders (power of 2)
             elastic_arena: false,

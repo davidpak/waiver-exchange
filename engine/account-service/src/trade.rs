@@ -39,22 +39,22 @@ impl Trade {
             order_id,
         }
     }
-    
+
     /// Get the total value of the trade
     pub fn total_value(&self) -> Balance {
         self.quantity * self.price.to_cents()
     }
-    
+
     /// Get the commission (assuming 0% for now)
     pub fn commission(&self) -> Balance {
         Balance::default()
     }
-    
+
     /// Get the net amount (total value minus commission)
     pub fn net_amount(&self) -> Balance {
         self.total_value() - self.commission()
     }
-    
+
     /// Get the cash impact of this trade
     pub fn cash_impact(&self) -> Balance {
         match self.side {
@@ -62,7 +62,7 @@ impl Trade {
             TradeSide::Sell => self.net_amount(),
         }
     }
-    
+
     /// Get the position impact of this trade
     pub fn position_impact(&self) -> Balance {
         match self.side {
@@ -99,7 +99,7 @@ impl From<&Trade> for TradeDetails {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_trade_creation() {
         let trade = Trade::new(
@@ -108,16 +108,16 @@ mod tests {
             1,
             TradeSide::Buy,
             Balance::from_basis_points(1000000), // 100 shares
-            Balance::from_cents(1000), // $10
+            Balance::from_cents(1000),           // $10
             123,
         );
-        
+
         assert_eq!(trade.account_id, 100);
         assert_eq!(trade.symbol_id, 1);
         assert_eq!(trade.side, TradeSide::Buy);
         assert_eq!(trade.total_value(), Balance::from_cents(100000)); // $1000
     }
-    
+
     #[test]
     fn test_trade_cash_impact() {
         let buy_trade = Trade::new(
@@ -126,24 +126,24 @@ mod tests {
             1,
             TradeSide::Buy,
             Balance::from_basis_points(1000000), // 100 shares
-            Balance::from_cents(1000), // $10
+            Balance::from_cents(1000),           // $10
             123,
         );
-        
+
         let sell_trade = Trade::new(
             2,
             100,
             1,
             TradeSide::Sell,
             Balance::from_basis_points(1000000), // 100 shares
-            Balance::from_cents(1000), // $10
+            Balance::from_cents(1000),           // $10
             124,
         );
-        
+
         assert_eq!(buy_trade.cash_impact(), Balance::from_cents(-100000)); // -$1000
         assert_eq!(sell_trade.cash_impact(), Balance::from_cents(100000)); // +$1000
     }
-    
+
     #[test]
     fn test_trade_position_impact() {
         let buy_trade = Trade::new(
@@ -152,21 +152,22 @@ mod tests {
             1,
             TradeSide::Buy,
             Balance::from_basis_points(1000000), // 100 shares
-            Balance::from_cents(1000), // $10
+            Balance::from_cents(1000),           // $10
             123,
         );
-        
+
         let sell_trade = Trade::new(
             2,
             100,
             1,
             TradeSide::Sell,
             Balance::from_basis_points(1000000), // 100 shares
-            Balance::from_cents(1000), // $10
+            Balance::from_cents(1000),           // $10
             124,
         );
-        
+
         assert_eq!(buy_trade.position_impact(), Balance::from_basis_points(1000000)); // +100 shares
-        assert_eq!(sell_trade.position_impact(), Balance::from_basis_points(-1000000)); // -100 shares
+        assert_eq!(sell_trade.position_impact(), Balance::from_basis_points(-1000000));
+        // -100 shares
     }
 }

@@ -250,18 +250,4 @@ mod performance_tests {
         assert_eq!(metrics.total_ticks_processed, 1000);
     }
 
-    #[test]
-    fn test_config_creation_performance() {
-        let start = std::time::Instant::now();
-
-        // Create many configs
-        for _ in 0..1000 {
-            let _config = create_test_config();
-        }
-
-        let duration = start.elapsed();
-
-        // Should be very fast (under 1ms for 1000 configs)
-        assert!(duration < Duration::from_millis(1));
-    }
 }

@@ -7,7 +7,6 @@ mod queue;
 mod registry;
 mod types;
 
-
 pub use coordinator::SymbolCoordinator;
 pub use types::{
     CoordError, CoordinatorConfig, OrderQueueWriter, ReadyAtTick, SymbolId, WhistleHandle,

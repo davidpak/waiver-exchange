@@ -3,11 +3,11 @@
 use crate::error::GatewayError;
 use crate::messages::{AuthRequest, AuthResponse, RateLimits};
 use account_service::AccountService;
+use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use jsonwebtoken::{decode, DecodingKey, Validation, Algorithm};
-use serde::{Deserialize, Serialize};
 
 /// JWT claims structure
 #[derive(Debug, Serialize, Deserialize)]
@@ -156,11 +156,15 @@ impl AuthManager {
 
         if response.authenticated {
             let user_id = response.user_id.clone().unwrap_or_default();
-            
+
             // Look up account ID for this user
-            let account_id = self.account_service.get_account_id_by_user_id(&user_id)
-                .await
-                .map_err(|e| GatewayError::Authentication(format!("Failed to find account for user {}: {}", user_id, e)))?;
+            let account_id =
+                self.account_service.get_account_id_by_user_id(&user_id).await.map_err(|e| {
+                    GatewayError::Authentication(format!(
+                        "Failed to find account for user {}: {}",
+                        user_id, e
+                    ))
+                })?;
 
             // Create session with account ID
             let session = crate::messages::UserSession::new(
@@ -179,11 +183,14 @@ impl AuthManager {
     }
 
     /// Get user session by API key
-    pub async fn get_session(&self, api_key: &str) -> Result<crate::messages::UserSession, GatewayError> {
+    pub async fn get_session(
+        &self,
+        api_key: &str,
+    ) -> Result<crate::messages::UserSession, GatewayError> {
         let sessions = self.sessions.read().await;
-        let session = sessions.get(api_key).ok_or_else(|| {
-            GatewayError::Authentication("Session not found".to_string())
-        })?;
+        let session = sessions
+            .get(api_key)
+            .ok_or_else(|| GatewayError::Authentication("Session not found".to_string()))?;
 
         Ok(session.clone())
     }
@@ -228,39 +235,32 @@ impl AuthManager {
         // Decode and validate JWT token
         let mut validation = Validation::new(Algorithm::HS256);
         validation.set_audience(&["waiver-exchange-api"]); // Match the audience from OAuth server
-        
-        let token_data = decode::<JwtClaims>(
-            token,
-            &DecodingKey::from_secret(jwt_secret.as_ref()),
-            &validation,
-        ).map_err(|e| GatewayError::Authentication(format!("Invalid JWT token: {}", e)))?;
+
+        let token_data =
+            decode::<JwtClaims>(token, &DecodingKey::from_secret(jwt_secret.as_ref()), &validation)
+                .map_err(|e| GatewayError::Authentication(format!("Invalid JWT token: {}", e)))?;
 
         let claims = token_data.claims;
 
         // Check if token is expired
-        let now = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        
+        let now =
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+
         if claims.exp < now {
             return Err(GatewayError::Authentication("JWT token expired".to_string()));
         }
 
         // Parse account ID from subject (sub field contains the account ID)
-        let account_id = claims.sub.parse::<i64>()
-            .map_err(|e| GatewayError::Authentication(format!("Invalid account ID in JWT: {}", e)))?;
+        let account_id = claims.sub.parse::<i64>().map_err(|e| {
+            GatewayError::Authentication(format!("Invalid account ID in JWT: {}", e))
+        })?;
 
         // Create session with account ID from JWT claims
         let session = crate::messages::UserSession::new(
             claims.user_id.clone(),
             account_id,
             vec!["trade".to_string(), "market_data".to_string()], // Default permissions for OAuth users
-            RateLimits {
-                orders_per_second: 100,
-                market_data_per_second: 1000,
-                burst_limit: 10,
-            },
+            RateLimits { orders_per_second: 100, market_data_per_second: 1000, burst_limit: 10 },
         );
 
         // Store session using the JWT token as the key
@@ -280,11 +280,14 @@ impl AuthManager {
     }
 
     /// Get user session by JWT token
-    pub async fn get_session_by_jwt(&self, token: &str) -> Result<crate::messages::UserSession, GatewayError> {
+    pub async fn get_session_by_jwt(
+        &self,
+        token: &str,
+    ) -> Result<crate::messages::UserSession, GatewayError> {
         let sessions = self.sessions.read().await;
-        let session = sessions.get(token).ok_or_else(|| {
-            GatewayError::Authentication("JWT session not found".to_string())
-        })?;
+        let session = sessions
+            .get(token)
+            .ok_or_else(|| GatewayError::Authentication("JWT session not found".to_string()))?;
 
         Ok(session.clone())
     }

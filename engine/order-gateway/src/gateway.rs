@@ -16,13 +16,13 @@ use tracing::{error, info, warn};
 use warp::Filter;
 
 // OrderRouter integration
+use account_service::AccountService;
 use order_router::{
     CoordError as OrderRouterCoordError, OrderRouter, ReadyAtTick as OrderRouterReadyAtTick,
     RouterConfig, SymbolCoordinatorApi as OrderRouterApi,
 };
 use player_registry::PlayerRegistry;
 use symbol_coordinator::{CoordError, SymbolCoordinator, SymbolCoordinatorApi};
-use account_service::AccountService;
 
 /// Adapter to make SymbolCoordinator compatible with OrderRouter's trait
 struct SymbolCoordinatorAdapter {

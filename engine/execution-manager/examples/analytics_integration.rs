@@ -25,9 +25,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Create ExecutionManager
     let exec_config = ExecManagerConfig::default();
-    let account_service = Arc::new(account_service::AccountService::new(
-        account_service::AccountServiceConfig::default()
-    ).await?);
+    let account_service = Arc::new(
+        account_service::AccountService::new(account_service::AccountServiceConfig::default())
+            .await?,
+    );
     let mut exec_manager = ExecutionManager::new(exec_config, account_service);
 
     // Connect AnalyticsEngine to ExecutionManager

@@ -202,7 +202,12 @@ pub struct UserSession {
 
 impl UserSession {
     /// Create a new user session
-    pub fn new(user_id: String, account_id: i64, permissions: Vec<String>, rate_limits: RateLimits) -> Self {
+    pub fn new(
+        user_id: String,
+        account_id: i64,
+        permissions: Vec<String>,
+        rate_limits: RateLimits,
+    ) -> Self {
         let now = std::time::Instant::now();
         Self { user_id, account_id, permissions, rate_limits, start_time: now, last_activity: now }
     }

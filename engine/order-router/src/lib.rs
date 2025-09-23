@@ -5,7 +5,6 @@ mod router;
 mod sharding;
 mod types;
 
-
 pub use router::{OrderRouter, RouterConfig, RouterError};
 pub use sharding::{ShardId, SymbolShard};
 pub use types::{

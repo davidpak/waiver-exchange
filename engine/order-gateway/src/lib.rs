@@ -5,6 +5,7 @@
 //! real-time market data broadcasting.
 
 pub mod auth;
+pub mod cache;
 pub mod config;
 pub mod error;
 pub mod gateway;
@@ -12,6 +13,7 @@ pub mod market_data_broadcaster;
 pub mod messages;
 pub mod oauth;
 pub mod rate_limiter;
+pub mod rest_api;
 pub mod websocket_handler;
 
 pub use config::GatewayConfig;

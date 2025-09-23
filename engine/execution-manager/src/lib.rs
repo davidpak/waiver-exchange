@@ -25,13 +25,13 @@ pub use normalization::{EventNormalizer, NormalizedEvent};
 pub use shutdown::ShutdownManager;
 pub use tick_tracker::{TickBoundaryStats, TickTracker};
 
+use account_service::{position::TradeSide, trade::TradeDetails, AccountService};
 use dashmap::DashMap;
 use persistence::{PersistenceBackend, WalOperation};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use whistle::{OutboundQueue, TickId};
-use account_service::{AccountService, trade::TradeDetails, position::TradeSide};
 
 /// ExecutionManager - the central post-match emission and event distribution service
 ///
@@ -378,11 +378,13 @@ impl ExecutionManager {
         };
 
         // Settle both trades
-        self.account_service.settle_trade(&buy_trade).await
-            .map_err(|e| ExecutionError::SettlementFailed(format!("Buy trade settlement failed: {}", e)))?;
+        self.account_service.settle_trade(&buy_trade).await.map_err(|e| {
+            ExecutionError::SettlementFailed(format!("Buy trade settlement failed: {}", e))
+        })?;
 
-        self.account_service.settle_trade(&sell_trade).await
-            .map_err(|e| ExecutionError::SettlementFailed(format!("Sell trade settlement failed: {}", e)))?;
+        self.account_service.settle_trade(&sell_trade).await.map_err(|e| {
+            ExecutionError::SettlementFailed(format!("Sell trade settlement failed: {}", e))
+        })?;
 
         tracing::info!(
             "Successfully settled trade: {} shares of symbol {} at price {} between accounts {} and {}",
@@ -397,7 +399,7 @@ impl ExecutionManager {
     }
 
     /// Get account ID from order ID (placeholder implementation)
-    /// 
+    ///
     /// In a real system, this would query the order metadata or maintain a mapping.
     /// For now, we'll use a simple hash-based approach for testing.
     async fn get_account_id_from_order_id(&self, order_id: u64) -> Result<i64, ExecutionError> {
@@ -595,7 +597,7 @@ impl From<String> for ExecutionError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use account_service::config::{DatabaseConfig, RedisConfig, OAuthConfig, SleeperConfig};
+    use account_service::config::{DatabaseConfig, OAuthConfig, RedisConfig, SleeperConfig};
     // Removed unused whistle imports
 
     fn create_test_config() -> ExecManagerConfig {

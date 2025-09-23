@@ -7,3 +7,11 @@ coverage/
 criterion/
 .venv/
 .cursor/
+
+# Runtime data files
+data/
+.env
+token.json
+.sqlx/
+engine/account-service/.sqlx/
+setup-env.ps1
