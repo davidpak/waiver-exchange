@@ -46,6 +46,43 @@ impl PlayerRegistry {
         Ok(())
     }
 
+    /// Load player data, assign symbol IDs, and save updated JSON file
+    pub async fn load_and_assign_symbols<P: AsRef<Path>>(
+        &mut self,
+        file_path: P,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        info!("Loading player data and assigning symbol IDs from: {:?}", file_path.as_ref());
+
+        // Read and parse the JSON file
+        let json_content = tokio::fs::read_to_string(&file_path).await?;
+        let mut player_data: PlayerData = serde_json::from_str(&json_content)?;
+
+        info!("Loaded {} players from file", player_data.players.len());
+
+        // Assign symbol IDs to players
+        let max_symbols = (player_data.players.len() * 2) as u32;
+        for player in &mut player_data.players {
+            let symbol_id = ConsistentHasher::hash_to_symbol_id(
+                &player.name,
+                &player.position,
+                &player.team,
+                max_symbols,
+            );
+            player.symbol_id = Some(symbol_id);
+        }
+
+        // Save updated JSON file with symbol IDs
+        let updated_json = serde_json::to_string_pretty(&player_data)?;
+        tokio::fs::write(&file_path, updated_json).await?;
+        info!("Updated JSON file with symbol IDs");
+
+        // Create symbol mappings
+        self.create_symbol_mappings(&player_data.players)?;
+
+        info!("Created {} symbol mappings", self.symbol_count);
+        Ok(())
+    }
+
     /// Create symbol mappings from player data
     fn create_symbol_mappings(&mut self, players: &[Player]) -> Result<(), SymbolLookupError> {
         // Clear existing mappings
