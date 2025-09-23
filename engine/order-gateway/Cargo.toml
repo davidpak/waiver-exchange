@@ -51,6 +51,14 @@ chrono = { version = "0.4", features = ["serde"] }
 # UUID generation
 uuid = { version = "1.0", features = ["v4", "serde"] }
 
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "rust_decimal"] }
+rust_decimal = "1.32"
+
+# Redis caching
+redis = { version = "0.24", features = ["tokio-comp", "connection-manager"] }
+num-traits = "0.2"
+
 
 # Metrics
 metrics = "0.21"
