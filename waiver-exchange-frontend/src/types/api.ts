@@ -157,7 +157,7 @@ export type OrderType = 'LIMIT' | 'MARKET' | 'IOC' | 'FOK';
 // ============================================================================
 
 export const API_CONFIG = {
-  REST_BASE_URL: 'http://localhost:8081/api',
+  REST_BASE_URL: 'http://localhost:8083/api',
   WS_BASE_URL: 'ws://localhost:8081/ws',
   POLLING_INTERVAL: 1000, // 1 second
 } as const;

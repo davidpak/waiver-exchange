@@ -1,3 +1,4 @@
+import { QueryProvider } from '@/components/providers/QueryProvider';
 import { tradingTheme } from '@/styles/theme';
 import { ColorSchemeScript, MantineProvider } from '@mantine/core';
 import '@mantine/core/styles.css';
@@ -28,18 +29,20 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" data-mantine-color-scheme="dark">
       <head>
-        <ColorSchemeScript />
+        <ColorSchemeScript defaultColorScheme="dark" />
       </head>
       <body
         className={`${inter.variable} ${jetbrainsMono.variable} antialiased`}
       >
         <MantineProvider 
           theme={tradingTheme} 
-          defaultColorScheme="auto"
+          defaultColorScheme="dark"
         >
-          {children}
+          <QueryProvider>
+            {children}
+          </QueryProvider>
         </MantineProvider>
       </body>
     </html>
