@@ -101,6 +101,26 @@ impl SleeperClient {
         Ok(user.user_id)
     }
 
+    /// Get user info by user ID (returns username, display_name, etc.)
+    pub async fn get_user_by_id(&self, user_id: &str) -> Result<SleeperUser, AccountServiceError> {
+        let url = format!("{}/user/{}", self.config.api_base_url, user_id);
+        tracing::info!("SleeperClient::get_user_by_id calling URL: {}", url);
+        let response = self.client.get(&url).send().await?;
+
+        if !response.status().is_success() {
+            let error_msg = format!("Failed to get user by ID: {}", response.status());
+            tracing::error!("Sleeper API error: {}", error_msg);
+            return Err(AccountServiceError::SleeperApiError {
+                message: error_msg,
+            });
+        }
+
+        let user: SleeperUser = response.json().await?;
+        tracing::info!("Sleeper API response: user_id={}, username={}, display_name={}", 
+                      user.user_id, user.username, user.display_name);
+        Ok(user)
+    }
+
     /// Get user's leagues for a season (simplified approach)
     pub async fn get_user_leagues(
         &self,

@@ -798,12 +798,34 @@ impl WebSocketHandler {
             .await
             .map_err(|e| GatewayError::System(format!("Failed to get account: {}", e)))?;
 
+        // Get Sleeper username if we have a sleeper_user_id
+        let sleeper_username = if let Some(sleeper_user_id) = &account.sleeper_user_id {
+            tracing::info!("Attempting to get Sleeper username for user_id: {}", sleeper_user_id);
+            match self.account_service.get_sleeper_username(sleeper_user_id).await {
+                Ok(username) => {
+                    tracing::info!("Successfully got Sleeper username: {}", username);
+                    Some(username)
+                },
+                Err(e) => {
+                    tracing::warn!("Failed to get Sleeper username for user_id {}: {}", sleeper_user_id, e);
+                    None
+                }
+            }
+        } else {
+            tracing::info!("No sleeper_user_id found in account");
+            None
+        };
+
         let account_info = serde_json::json!({
             "account_id": account.id,
             "google_id": account.google_id,
             "display_name": account.display_name,
+            "user_id": account.id,
+            "name": account.display_name,
             "currency_balance": account.currency_balance,
+            "currency_balance_dollars": account.currency_balance.map(|balance| balance as f64 / 100.0),
             "sleeper_user_id": account.sleeper_user_id,
+            "sleeper_username": sleeper_username,
             "sleeper_league_id": account.sleeper_league_id,
             "sleeper_roster_id": account.sleeper_roster_id,
             "fantasy_points": account.fantasy_points,

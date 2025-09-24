@@ -51,8 +51,6 @@ impl AccountService {
         // Create database pool
         let db_pool = PgPool::connect(&config.database.url).await?;
 
-        // Run migrations
-        sqlx::migrate!("./migrations").run(&db_pool).await?;
 
         // Create Redis client
         let redis_client = RedisClient::open(config.redis.url.clone())?;
@@ -137,6 +135,14 @@ impl AccountService {
     /// Get user's leagues (helper method)
     pub async fn get_user_leagues(&self, user_id: &str, season: &str) -> Result<Vec<LeagueOption>> {
         self.sleeper_client.get_user_leagues(user_id, season).await
+    }
+
+    /// Get Sleeper username by user ID
+    pub async fn get_sleeper_username(&self, user_id: &str) -> Result<String> {
+        tracing::info!("AccountService::get_sleeper_username called with user_id: {}", user_id);
+        let sleeper_user = self.sleeper_client.get_user_by_id(user_id).await?;
+        tracing::info!("Sleeper API returned username: {}", sleeper_user.username);
+        Ok(sleeper_user.username)
     }
 
     /// Select a Sleeper league

@@ -72,7 +72,12 @@ async fn main() {
 
                 match oauth_manager.exchange_code_for_tokens(code, state).await {
                     Ok(token_response) => {
-                        // Return HTML page that closes popup and sends token to parent
+                        info!("OAuth success - User info: id={}, name={}, email={}", 
+                              token_response.user_info.id, 
+                              token_response.user_info.name, 
+                              token_response.user_info.email);
+                        
+                        // Return HTML page that closes popup and sends token and user info to parent
                         let html = format!(
                             r#"<!DOCTYPE html>
                             <html>
@@ -82,7 +87,12 @@ async fn main() {
                                     if (window.opener) {{
                                         window.opener.postMessage({{
                                             type: 'oauth_success',
-                                            token: '{}'
+                                            token: '{}',
+                                            user: {{
+                                                id: '{}',
+                                                name: '{}',
+                                                email: '{}'
+                                            }}
                                         }}, '*');
                                         window.close();
                                     }}
@@ -90,7 +100,10 @@ async fn main() {
                                 <p>Authentication successful! You can close this window.</p>
                             </body>
                             </html>"#,
-                            token_response.access_token
+                            token_response.access_token,
+                            token_response.user_info.id,
+                            token_response.user_info.name,
+                            token_response.user_info.email
                         );
                         Ok::<_, warp::Rejection>(warp::reply::html(html))
                     }
