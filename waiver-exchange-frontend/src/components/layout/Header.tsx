@@ -1,14 +1,16 @@
 'use client';
 
+import { AccountInfoPopover } from '@/components/auth/AccountInfoPopover';
 import { AnimatedButton } from '@/components/ui/AnimatedButton';
 import { NavigationButton } from '@/components/ui/NavigationButton';
+import { useAuthStore } from '@/stores/authStore';
 import { AppShell, Avatar, Badge, Box, Burger, Drawer, Group, NavLink, Text, ThemeIcon, useMantineColorScheme } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconBell, IconDashboard, IconList, IconMoon, IconSettings, IconSun, IconUser } from '@tabler/icons-react';
+import { useRouter } from 'next/navigation';
 import { useCallback, useMemo, useState } from 'react';
 
 interface HeaderProps {
-  isLoggedIn?: boolean;
   onNavigate?: (route: string) => void;
   onToggleTheme?: () => void;
 }
@@ -18,13 +20,14 @@ interface HeaderProps {
  * Handles navigation, authentication states, and theme switching
  */
 function Header({ 
-  isLoggedIn = false, 
   onNavigate,
   onToggleTheme 
 }: HeaderProps) {
   const { colorScheme, toggleColorScheme } = useMantineColorScheme();
   const [opened, { toggle, close }] = useDisclosure(false);
   const [activeRoute, setActiveRoute] = useState('dashboard');
+  const { isAuthenticated } = useAuthStore();
+  const router = useRouter();
 
   const handleThemeToggle = () => {
     toggleColorScheme();
@@ -36,9 +39,17 @@ function Header({
     requestAnimationFrame(() => {
       setActiveRoute(route);
     });
+    
+    // Handle special routes
+    if (route === 'login' || route === 'signup') {
+      router.push('/login');
+      close();
+      return;
+    }
+    
     onNavigate?.(route);
     close(); // Close mobile drawer after navigation
-  }, [onNavigate, close]);
+  }, [onNavigate, close, router]);
   
   // Memoize the navigation buttons to prevent re-renders
   const navigationButtons = useMemo(() => (
@@ -127,7 +138,7 @@ function Header({
               {colorScheme === 'dark' ? <IconSun size={20} /> : <IconMoon size={20} />}
             </ThemeIcon>
             
-            {isLoggedIn ? (
+            {isAuthenticated ? (
               // Authenticated User
               <Group gap="sm">
                 <Box hiddenFrom="sm">
@@ -187,22 +198,18 @@ function Header({
                       <IconSettings size={20} />
                     </ThemeIcon>
                     
-                    <Avatar 
-                      size="md" 
-                      color="blue"
-                      style={{ 
-                        transition: 'all 0.2s ease',
-                        opacity: 0.9
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.opacity = '1';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.opacity = '0.9';
-                      }}
-                    >
-                      <IconUser size={16} />
-                    </Avatar>
+                    <AccountInfoPopover>
+                      <Avatar 
+                        size="md" 
+                        color="blue"
+                        style={{ 
+                          transition: 'all 0.2s ease',
+                          cursor: 'pointer'
+                        }}
+                      >
+                        <IconUser size={16} />
+                      </Avatar>
+                    </AccountInfoPopover>
                   </Group>
                 </Box>
               </Group>
@@ -312,7 +319,7 @@ function Header({
           />
           
           {/* User Actions */}
-          {isLoggedIn ? (
+          {isAuthenticated ? (
             <>
               <Text size="sm" c="dimmed" mt="lg" mb="sm">Account</Text>
               

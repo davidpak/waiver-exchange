@@ -1,12 +1,12 @@
 'use client';
 
 import { useAutoAnimate } from '@/hooks/useAutoAnimate';
-import { AppShell, Box, Grid, Stack, Tabs, useMantineTheme } from '@mantine/core';
+import { AppShell, Box, Grid, ScrollArea, Stack, Tabs, useMantineTheme } from '@mantine/core';
 import { useState } from 'react';
+import { AccountSummary } from '../trading/AccountSummary';
 import { Header } from './Header';
 
 interface TradingLayoutProps {
-  isLoggedIn?: boolean;
   onNavigate?: (route: string) => void;
   onToggleTheme?: () => void;
 }
@@ -16,7 +16,6 @@ interface TradingLayoutProps {
  * Main layout component that orchestrates the entire trading dashboard
  */
 export function TradingLayout({ 
-  isLoggedIn = false, 
   onNavigate,
   onToggleTheme 
 }: TradingLayoutProps) {
@@ -35,7 +34,6 @@ export function TradingLayout({
       }}
     >
       <Header 
-        isLoggedIn={isLoggedIn}
         onNavigate={onNavigate}
         onToggleTheme={onToggleTheme}
       />
@@ -48,18 +46,9 @@ export function TradingLayout({
             <Grid.Col span={4}>
               <Stack gap="xs">
                 {/* Account Summary Component */}
-                <div style={{ 
-                  height: '350px', 
-                  backgroundColor: 'var(--mantine-color-body)', 
-                  borderRadius: '8px',
-                  border: '1px solid var(--mantine-color-default-border)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  color: 'var(--mantine-color-text)'
-                }}>
-                  Account Summary
-                </div>
+                <ScrollArea style={{ height: '350px' }}>
+                  <AccountSummary />
+                </ScrollArea>
                 
                 {/* Holdings List Component */}
                 <div style={{ 
@@ -204,18 +193,9 @@ export function TradingLayout({
             </Tabs.Panel>
 
             <Tabs.Panel value="account" pt="md">
-              <div style={{ 
-                height: '500px', 
-                backgroundColor: 'var(--mantine-color-body)', 
-                borderRadius: '8px',
-                border: '1px solid var(--mantine-color-default-border)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                color: 'var(--mantine-color-text)'
-              }}>
-                Account Summary
-              </div>
+              <ScrollArea style={{ height: '500px' }}>
+                <AccountSummary />
+              </ScrollArea>
             </Tabs.Panel>
           </Tabs>
         </Box>

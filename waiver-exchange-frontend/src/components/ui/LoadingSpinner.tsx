@@ -1,7 +1,7 @@
 'use client';
 
+import { Center, Loader, Stack, Text } from '@mantine/core';
 import { motion } from 'framer-motion';
-import { Loader, Text, Stack, Center } from '@mantine/core';
 
 interface LoadingSpinnerProps {
   size?: 'xs' | 'sm' | 'md' | 'lg' | 'xl';
