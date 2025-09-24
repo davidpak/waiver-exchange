@@ -6,20 +6,43 @@ This document outlines the complete production deployment strategy for the Waive
 ## Current Architecture
 
 ### Services Running:
-1. **REST API Server** - Port 8081 (`rest_server` binary)
-2. **OAuth Server** - Port 8082 (`oauth-server` binary) 
-3. **WebSocket Server** - Port 8081 (via `waiver-exchange-service`)
+1. **Waiver Exchange Service** - Port 8081 (WebSocket + OrderGateway)
+2. **REST API Server** - Port 8083 (`rest_server` binary)
+3. **OAuth Server** - Port 8082 (`oauth-server` binary) 
 4. **PostgreSQL Database** - Port 5432
 5. **Redis Cache** - Port 6379
+6. **Frontend** - Port 3000 (Next.js)
 
-### Current Issues:
-- Multiple separate servers on different ports
-- Complex deployment and management
-- No unified service orchestration
+### Current Status:
+- ✅ All services working correctly on separate ports
+- ✅ Port conflicts resolved (REST API moved to 8083)
+- ✅ Environment variables properly configured
+- ✅ Database migrations working
+- ✅ Ready for production deployment
 
 ## Deployment Options
 
-### Option 1: Docker Compose (Recommended for Development/Testing)
+### Option 1: Linux VPS with systemd (Recommended for Production)
+**Pros:**
+- Production-ready and reliable
+- Better performance than Docker
+- Native process management with systemd
+- Lower resource usage
+- Industry standard for production servers
+- Easy scaling and monitoring
+
+**Cons:**
+- Requires Linux server management knowledge
+- Manual service configuration
+
+**Implementation:**
+- Ubuntu 22.04 LTS VPS
+- systemd services for auto-start and management
+- Nginx reverse proxy
+- Let's Encrypt SSL certificates
+- Bash scripts for deployment and management
+
+### Option 2: Docker Compose (Development/Testing Only)
 **Pros:**
 - Easy local development
 - Service isolation
@@ -30,6 +53,7 @@ This document outlines the complete production deployment strategy for the Waive
 - Multiple containers to manage
 - Resource overhead
 - Not ideal for production scaling
+- Docker Desktop issues on Windows
 
 **Implementation:**
 ```yaml
@@ -54,40 +78,19 @@ services:
   waiver-exchange:
     build: .
     ports:
-      - "8081:8081"  # REST API
+      - "8081:8081"  # WebSocket
       - "8082:8082"  # OAuth
+      - "8083:8083"  # REST API
     depends_on:
       - postgres
       - redis
     environment:
       DATABASE_URL: postgresql://postgres:password@postgres:5432/waiver_exchange
       REDIS_URL: redis://redis:6379
-    command: >
-      sh -c "
-        cargo run --bin rest_server &
-        cargo run --bin oauth-server &
-        wait
-      "
 
 volumes:
   postgres_data:
 ```
-
-### Option 2: Single Service Consolidation (Recommended for Production)
-**Pros:**
-- Single binary deployment
-- Better resource utilization
-- Simplified management
-- Production-ready
-
-**Cons:**
-- Requires code refactoring
-- More complex initial setup
-
-**Implementation:**
-- Consolidate OAuth routes into main OrderGateway
-- Single port (8081) for all services
-- Unified configuration management
 
 ### Option 3: Self-Hosting (Budget-Friendly)
 
@@ -100,7 +103,7 @@ volumes:
 
 **Software Stack:**
 - Ubuntu Server 22.04 LTS
-- Docker & Docker Compose
+- systemd services
 - Nginx (reverse proxy)
 - Let's Encrypt (SSL certificates)
 - UFW (firewall)
@@ -111,18 +114,19 @@ volumes:
 - Domain: $10-15/year
 - **Total: ~$10-30/month**
 
-#### VPS Setup (Recommended):
+#### VPS Setup (Recommended for Production):
 **Provider Options:**
 - DigitalOcean: $5-20/month
 - Linode: $5-20/month
 - Vultr: $6-20/month
 - Hetzner: €4-15/month
 
-**Specifications:**
-- 1-2 vCPUs
-- 1-4GB RAM
-- 25-50GB SSD
-- 1TB+ bandwidth
+**Recommended Specifications:**
+- 2 vCPUs
+- 4GB RAM
+- 50GB SSD
+- 2TB+ bandwidth
+- Ubuntu 22.04 LTS
 
 ### Option 4: Cloud Deployment (Enterprise)
 
@@ -146,18 +150,19 @@ volumes:
 ## Production Deployment Steps
 
 ### Phase 1: Infrastructure Setup
-1. **Choose deployment option** (VPS recommended for budget)
-2. **Set up server** (Ubuntu 22.04 LTS)
-3. **Install Docker & Docker Compose**
+1. **Choose deployment option** (Linux VPS recommended)
+2. **Set up Ubuntu 22.04 LTS server**
+3. **Install system dependencies** (Rust, PostgreSQL, Redis, Nginx)
 4. **Configure firewall** (UFW)
 5. **Set up domain DNS** (waiver.exchange)
 
 ### Phase 2: Service Deployment
-1. **Deploy database** (PostgreSQL)
-2. **Deploy cache** (Redis)
-3. **Deploy application** (Waiver Exchange services)
-4. **Configure reverse proxy** (Nginx)
-5. **Set up SSL certificates** (Let's Encrypt)
+1. **Deploy database** (PostgreSQL with systemd)
+2. **Deploy cache** (Redis with systemd)
+3. **Build and deploy application** (Waiver Exchange services)
+4. **Configure systemd services** (auto-start and management)
+5. **Configure reverse proxy** (Nginx)
+6. **Set up SSL certificates** (Let's Encrypt)
 
 ### Phase 3: Monitoring & Security
 1. **Set up monitoring** (Prometheus + Grafana)
@@ -257,18 +262,42 @@ volumes:
 
 ## Next Steps
 
-1. **Implement Docker Compose** for development
-2. **Test all services** with consolidated setup
-3. **Choose production deployment option**
-4. **Set up staging environment**
-5. **Plan production deployment timeline**
+1. **Create Linux deployment scripts** (bash scripts for service management)
+2. **Set up systemd service files** (auto-start and process management)
+3. **Create Nginx configuration** (reverse proxy setup)
+4. **Test on local Linux VM** (Ubuntu 22.04)
+5. **Deploy to production VPS** (DigitalOcean/Linode/Vultr)
+
+## Linux Deployment Scripts
+
+### Required Scripts:
+- `deploy.sh` - Main deployment script
+- `start-all-services.sh` - Start all services
+- `stop-all-services.sh` - Stop all services
+- `health-check.sh` - Service health monitoring
+- `view-logs.sh` - View service logs
+- `setup-production-env.sh` - Environment setup
+
+### systemd Service Files:
+- `waiver-exchange.service` - Main trading engine
+- `rest-api.service` - REST API server
+- `oauth-server.service` - OAuth authentication
+- `postgresql.service` - Database (system package)
+- `redis.service` - Cache (system package)
+
+### Nginx Configuration:
+- Reverse proxy for all services
+- SSL termination with Let's Encrypt
+- Load balancing (if needed)
+- Static file serving for frontend
 
 ## Conclusion
 
-For a budget-conscious deployment, **VPS with Docker Compose** is recommended. This provides:
+For production deployment, **Linux VPS with systemd** is recommended. This provides:
 - Low cost ($6-21/month)
-- Full control over infrastructure
-- Easy scaling as needed
-- Professional-grade setup
+- Production-grade reliability
+- Native process management
+- Industry-standard deployment
+- Easy scaling and monitoring
 
 The deployment plan prioritizes security, reliability, and cost-effectiveness while maintaining the ability to scale as the platform grows.

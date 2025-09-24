@@ -48,7 +48,7 @@ The frontend is not a toy; it is an **engineering showcase** equal to the backen
 - **State:** Zustand (domain slices) + TanStack Query (server state)  
 - **Data transport:** REST API (primary), WebSocket (real-time updates), HTTP (snapshots/mutations)  
 - **Tables:** TanStack Table + react-virtuoso (virtualization)  
-- **Charts:** TradingView Lightweight Charts (canvas)  
+- **Charts:** TradingView Lightweight Charts (canvas) - Professional trading charts with real-time updates  
 - **Layout:** react-grid-layout (MVP), Golden Layout (future pro mode)  
 - **Testing:** Vitest, Playwright, Storybook, Chromatic  
 - **Perf tooling:** React Profiler, Web Vitals beacons, custom tick-trace overlay  
@@ -99,11 +99,15 @@ The frontend is not a toy; it is an **engineering showcase** equal to the backen
 ## 6. Widgets (MVP Scope)
 
 ### 6.1 Account Summary
-- **Total Equity:** Currency balance + positions value
-- **Day Change:** Today's P&L with percentage and dollar amount
+- **Total Equity:** Currency balance + positions value (large, prominent display)
+- **Day Change:** Today's P&L with percentage and dollar amount (smaller, under equity)
 - **Buying Power:** Available cash for trading
-- **Mini Chart:** Simple line chart of account value over time
-- **Data Source:** Database via AccountService
+- **Interactive Mini Chart:** TradingView LineSeries chart of account equity over time
+  - **Hover Tooltip:** Shows equity value and change percentage/amount for that time period
+  - **Time Ranges:** 1D, 1W, 1M, 1Y with built-in range switcher
+  - **Interactive:** Hover shows change from start of selected period to hover point
+  - **Real-time Updates:** Updates every second via `update()` method
+- **Data Source:** `/api/account/equity-history` endpoint
 - **SLA:** Update visible in ≤ 150ms after data refresh
 
 ### 6.2 Holdings List  
@@ -115,9 +119,14 @@ The frontend is not a toy; it is an **engineering showcase** equal to the backen
 
 ### 6.3 Symbol View (Center Component)
 - **Header:** Symbol name, position, team, current price, day change, 24h high/low
-- **Chart:** Candlestick chart with 1D/1W/1M/3M/1Y timeframes
+- **TradingView Candlestick Chart:** Professional OHLC chart with multiple timeframes
+  - **Chart Type:** CandlestickSeries with volume indicators
+  - **Time Ranges:** 1D (5-min candles), 1W (1-hour), 1M (4-hour), 1Y (daily)
+  - **Real-time Updates:** New candles streamed via `update()` method
+  - **Interactive Features:** Zoom, pan, crosshair, price lines
+  - **Theme Integration:** Dark/light mode support
 - **Order Form:** Buy/sell buttons with quantity/price inputs
-- **Data Sources:** Sleeper API (metadata), snapshots (current price), price history (chart)
+- **Data Sources:** `/api/symbol/{id}/info` (metadata), `/api/price-history/{id}` (chart data)
 - **SLA:** ≤ 16ms per redraw; linked updates ≤ 100ms
 
 ### 6.4 Order Book (Side Component)
@@ -143,7 +152,186 @@ The frontend is not a toy; it is an **engineering showcase** equal to the backen
 
 ---
 
-## 7. Performance & SLAs
+## 7. TradingView Lightweight Charts Integration
+
+### 7.1 Chart Library Overview
+- **Library:** TradingView Lightweight Charts v5.0
+- **Size:** 35KB total (production build)
+- **Technology:** HTML5 Canvas for high performance
+- **Features:** Real-time updates, responsive design, accessibility compliant
+- **Installation:** `npm install --save lightweight-charts`
+
+### 7.2 Chart Types & Usage
+
+**Account Summary Mini-Chart:**
+```typescript
+import { createChart, LineSeries } from 'lightweight-charts';
+
+const chart = createChart(container, {
+  width: 300,
+  height: 200,
+  layout: { background: { color: 'transparent' } },
+  grid: { vertLines: { visible: false }, horzLines: { visible: false } },
+  timeScale: { visible: false },
+  rightPriceScale: { visible: false }
+});
+
+const lineSeries = chart.addSeries(LineSeries, {
+  color: '#26a69a',
+  lineWidth: 2
+});
+```
+
+**Symbol View Candlestick Chart:**
+```typescript
+import { createChart, CandlestickSeries } from 'lightweight-charts';
+
+const chart = createChart(container, {
+  width: 800,
+  height: 400,
+  layout: { background: { color: 'var(--mantine-color-body)' } },
+  grid: { vertLines: { color: 'var(--mantine-color-dimmed)' } },
+  timeScale: { timeVisible: true, secondsVisible: false },
+  rightPriceScale: { borderColor: 'var(--mantine-color-dimmed)' }
+});
+
+const candlestickSeries = chart.addSeries(CandlestickSeries, {
+  upColor: '#26a69a',
+  downColor: '#ef5350',
+  borderVisible: false,
+  wickUpColor: '#26a69a',
+  wickDownColor: '#ef5350'
+});
+```
+
+### 7.3 Data Format & Transformation
+
+**Equity History Data (Account Summary):**
+```typescript
+// API Response: /api/account/equity-history
+interface EquityHistoryPoint {
+  date: string;        // "2025-01-15"
+  total_equity: number; // 125000 (cents)
+  day_change: number;   // 2500 (cents)
+  day_change_percent: number; // 2.04
+}
+
+// Transform to TradingView format
+const chartData = equityHistory.map(point => ({
+  time: point.date,           // TradingView accepts date strings
+  value: point.total_equity / 100  // Convert cents to dollars
+}));
+```
+
+**Price History Data (Symbol View):**
+```typescript
+// API Response: /api/price-history/{symbolId}?period=1d&interval=5m
+interface PriceHistoryPoint {
+  timestamp: string;    // "2025-01-15T09:30:00Z"
+  open: number;         // 35000 (cents)
+  high: number;         // 35500 (cents)
+  low: number;          // 34800 (cents)
+  close: number;        // 35200 (cents)
+  volume: number;       // 1000
+}
+
+// Transform to TradingView format
+const chartData = priceHistory.map(point => ({
+  time: point.timestamp,
+  open: point.open / 100,    // Convert cents to dollars
+  high: point.high / 100,
+  low: point.low / 100,
+  close: point.close / 100
+}));
+```
+
+### 7.4 Real-time Updates
+
+**Account Summary Updates:**
+```typescript
+// Update every second with new equity data
+const updateAccountChart = (newEquityData: EquityHistoryPoint) => {
+  const chartPoint = {
+    time: newEquityData.date,
+    value: newEquityData.total_equity / 100
+  };
+  
+  // Update last point or add new point
+  lineSeries.update(chartPoint);
+};
+```
+
+**Symbol View Updates:**
+```typescript
+// Update with new candlestick data
+const updatePriceChart = (newCandle: PriceHistoryPoint) => {
+  const candleData = {
+    time: newCandle.timestamp,
+    open: newCandle.open / 100,
+    high: newCandle.high / 100,
+    low: newCandle.low / 100,
+    close: newCandle.close / 100
+  };
+  
+  // Update last candle or add new candle
+  candlestickSeries.update(candleData);
+};
+```
+
+### 7.5 Interactive Features
+
+**Hover Tooltips (Account Summary):**
+- **Equity Value:** Display current equity at hover point
+- **Change Calculation:** Show change from period start to hover point
+- **Time Period:** Display date/time of hover point
+- **Percentage Change:** Calculate and display percentage change
+
+**Range Switching:**
+- **Built-in Controls:** TradingView provides range switcher UI
+- **Time Periods:** 1D, 1W, 1M, 1Y for account summary
+- **Candle Intervals:** 5-min (1D), 1-hour (1W), 4-hour (1M), daily (1Y) for symbol view
+
+### 7.6 Theme Integration
+
+**Dark/Light Mode Support:**
+```typescript
+const chartOptions = {
+  layout: {
+    background: { color: 'var(--mantine-color-body)' },
+    textColor: 'var(--mantine-color-text)'
+  },
+  grid: {
+    vertLines: { color: 'var(--mantine-color-dimmed)' },
+    horzLines: { color: 'var(--mantine-color-dimmed)' }
+  },
+  timeScale: {
+    borderColor: 'var(--mantine-color-dimmed)',
+    timeVisible: true,
+    secondsVisible: false
+  },
+  rightPriceScale: {
+    borderColor: 'var(--mantine-color-dimmed)',
+    textColor: 'var(--mantine-color-text)'
+  }
+};
+```
+
+### 7.7 Performance Considerations
+
+**Optimization Strategies:**
+- **Canvas Rendering:** 35KB library with HTML5 Canvas for 60fps performance
+- **Data Batching:** Update charts in batches to avoid excessive re-renders
+- **Memory Management:** Limit historical data points to prevent memory leaks
+- **Responsive Design:** Charts automatically resize with container
+
+**Update Frequency:**
+- **Account Summary:** Update every 1 second with new equity data
+- **Symbol View:** Update every 1 second with new price data
+- **Chart Redraws:** ≤ 16ms per frame target maintained
+
+---
+
+## 8. Performance & SLAs
 
 | Metric | Target |
 | ------ | ------ |
@@ -436,6 +624,9 @@ npm install @tanstack/react-query zustand
 npm install lightweight-charts react-grid-layout
 npm install @types/react-grid-layout
 npm install ws @types/ws  # For WebSocket support
+
+# TradingView Lightweight Charts (already included above)
+# npm install --save lightweight-charts
 ```
 
 **5. Key Implementation Notes:**
@@ -446,10 +637,116 @@ npm install ws @types/ws  # For WebSocket support
 - **CORS enabled** - Backend allows all origins for development
 - **WebSocket authentication** - Use `auth` method with API key/secret
 - **Order placement** - Use `order.place` WebSocket method for trading
+- **TradingView Charts** - Professional charts with real-time updates and interactive tooltips
+- **Theme Integration** - Charts automatically adapt to dark/light mode using CSS variables
 
 ---
 
-## 18. Done-When (MVP Acceptance)
+## 18. Account Summary Component Implementation
+
+### 18.1 Component Structure
+```typescript
+interface AccountSummaryProps {
+  accountId: string;
+  refreshInterval?: number; // Default: 1000ms
+}
+
+interface AccountSummaryData {
+  totalEquity: number;        // In cents
+  dayChange: number;          // In cents
+  dayChangePercent: number;   // Percentage
+  buyingPower: number;        // In cents
+  equityHistory: EquityHistoryPoint[];
+}
+```
+
+### 18.2 Data Flow
+1. **Initial Load:** Fetch account summary and equity history
+2. **Real-time Updates:** Poll every 1 second for new data
+3. **Chart Updates:** Update TradingView chart with new equity data
+4. **UI Updates:** Update displayed values with new data
+
+### 18.3 TradingView Chart Integration
+```typescript
+// Account Summary Mini-Chart Setup
+const setupAccountChart = (container: HTMLElement) => {
+  const chart = createChart(container, {
+    width: 300,
+    height: 200,
+    layout: { 
+      background: { color: 'transparent' },
+      textColor: 'var(--mantine-color-text)'
+    },
+    grid: { 
+      vertLines: { visible: false }, 
+      horzLines: { visible: false } 
+    },
+    timeScale: { visible: false },
+    rightPriceScale: { visible: false }
+  });
+
+  const lineSeries = chart.addSeries(LineSeries, {
+    color: 'var(--mantine-color-blue-6)',
+    lineWidth: 2
+  });
+
+  return { chart, lineSeries };
+};
+```
+
+### 18.4 Interactive Tooltip Implementation
+```typescript
+// Custom tooltip for equity change calculation
+const createEquityTooltip = (equityHistory: EquityHistoryPoint[]) => {
+  return (param: any) => {
+    if (!param.point) return null;
+    
+    const currentPoint = equityHistory[param.pointIndex];
+    const startPoint = equityHistory[0];
+    
+    const change = currentPoint.total_equity - startPoint.total_equity;
+    const changePercent = (change / startPoint.total_equity) * 100;
+    
+    return {
+      title: currentPoint.date,
+      content: [
+        `Equity: $${(currentPoint.total_equity / 100).toFixed(2)}`,
+        `Change: $${(change / 100).toFixed(2)} (${changePercent.toFixed(2)}%)`
+      ]
+    };
+  };
+};
+```
+
+### 18.5 Real-time Update Strategy
+```typescript
+// Update chart with new equity data
+const updateAccountChart = (
+  lineSeries: ISeriesApi<'Line'>,
+  newData: EquityHistoryPoint
+) => {
+  const chartPoint = {
+    time: newData.date,
+    value: newData.total_equity / 100
+  };
+  
+  // Update last point or add new point
+  lineSeries.update(chartPoint);
+};
+```
+
+### 18.6 Component Features
+- **Large Equity Display:** Prominent total equity value
+- **Day Change:** Smaller display of daily P&L with percentage
+- **Buying Power:** Available cash for trading
+- **Interactive Chart:** Hover to see equity and change at any point
+- **Time Range Switching:** 1D, 1W, 1M, 1Y with built-in controls
+- **Real-time Updates:** Chart updates every second
+- **Theme Integration:** Automatically adapts to dark/light mode
+
+---
+
+## 19. Done-When (MVP Acceptance)
 
 - User can view account summary with real-time balance and P&L.  
 - User can see holdings list with current market values.  
