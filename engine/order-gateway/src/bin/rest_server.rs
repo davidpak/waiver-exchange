@@ -58,7 +58,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let routes = rest_api::create_routes(registry, db_pool, snapshot_manager, cache);
 
     // Start server
-    let port = 8081;
+    let port = 8083;
     info!("Starting REST API server on port {}", port);
 
     warp::serve(routes).run(([127, 0, 0, 1], port)).await;

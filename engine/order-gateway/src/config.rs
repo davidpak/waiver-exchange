@@ -84,7 +84,7 @@ impl Default for ServerConfig {
     fn default() -> Self {
         Self {
             host: "0.0.0.0".to_string(),
-            port: 8081,
+            port: 8083,
             max_connections: 10000,
             heartbeat_interval: 30,
             connection_timeout: 60,
