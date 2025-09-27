@@ -3,8 +3,9 @@
 import { AccountInfoPopover } from '@/components/auth/AccountInfoPopover';
 import { AnimatedButton } from '@/components/ui/AnimatedButton';
 import { NavigationButton } from '@/components/ui/NavigationButton';
+import { useCustomTheme } from '@/hooks/useCustomTheme';
 import { useAuthStore } from '@/stores/authStore';
-import { AppShell, Avatar, Badge, Box, Burger, Drawer, Group, NavLink, Text, ThemeIcon, useMantineColorScheme } from '@mantine/core';
+import { AppShell, Avatar, Badge, Box, Burger, Drawer, Group, NavLink, Text, ThemeIcon } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconBell, IconDashboard, IconList, IconMoon, IconSettings, IconSun, IconUser } from '@tabler/icons-react';
 import { useRouter } from 'next/navigation';
@@ -23,14 +24,14 @@ function Header({
   onNavigate,
   onToggleTheme 
 }: HeaderProps) {
-  const { colorScheme, toggleColorScheme } = useMantineColorScheme();
+  const { theme, toggleTheme, isDark } = useCustomTheme();
   const [opened, { toggle, close }] = useDisclosure(false);
   const [activeRoute, setActiveRoute] = useState('dashboard');
   const { isAuthenticated } = useAuthStore();
   const router = useRouter();
 
   const handleThemeToggle = () => {
-    toggleColorScheme();
+    toggleTheme();
     onToggleTheme?.();
   };
 
@@ -75,8 +76,8 @@ function Header({
     <>
       <AppShell.Header
                style={{
-                 backgroundColor: 'var(--mantine-color-body)',
-                 borderBottom: '1px solid var(--mantine-color-default-border)',
+                 backgroundColor: 'var(--site-bg)',
+                 borderBottom: '1px solid var(--border-primary)',
                  backdropFilter: 'blur(10px)',
                  zIndex: 1000,
                  // Prevent layout shifts during re-renders
@@ -96,13 +97,13 @@ function Header({
                        opened={opened}
                        onClick={toggle}
                        size="sm"
-                       color="var(--mantine-color-text)"
+                       color="var(--text-primary)"
                      />
             </Box>
             
                    {/* Logo */}
                    <Group gap="sm">
-                     <Text size="xl" fw={700} c="var(--mantine-color-text)">
+                     <Text size="xl" fw={700} c="var(--text-primary)">
                        The Waiver Exchange
                      </Text>
                      <Badge color="orange" variant="light" size="sm">
@@ -135,7 +136,7 @@ function Header({
                 e.currentTarget.style.opacity = '0.9';
               }}
             >
-              {colorScheme === 'dark' ? <IconSun size={20} /> : <IconMoon size={20} />}
+              {isDark ? <IconSun size={20} /> : <IconMoon size={20} />}
             </ThemeIcon>
             
             {isAuthenticated ? (

@@ -1,7 +1,7 @@
 'use client';
 
 import { useAutoAnimate } from '@/hooks/useAutoAnimate';
-import { AppShell, Box, Grid, ScrollArea, Stack, Tabs, useMantineTheme } from '@mantine/core';
+import { AppShell, Box, Grid, Stack, Tabs, useMantineTheme } from '@mantine/core';
 import { useState } from 'react';
 import { AccountSummary } from '../trading/AccountSummary';
 import { Header } from './Header';
@@ -29,7 +29,7 @@ export function TradingLayout({
       padding={0}
       styles={{
         main: {
-          backgroundColor: 'var(--mantine-color-body)',
+          backgroundColor: 'var(--site-bg)',
         },
       }}
     >
@@ -46,9 +46,7 @@ export function TradingLayout({
             <Grid.Col span={4}>
               <Stack gap="xs">
                 {/* Account Summary Component */}
-                <ScrollArea style={{ height: '350px' }}>
-                  <AccountSummary />
-                </ScrollArea>
+                <AccountSummary />
                 
                 {/* Holdings List Component */}
                 <div style={{ 
@@ -193,9 +191,7 @@ export function TradingLayout({
             </Tabs.Panel>
 
             <Tabs.Panel value="account" pt="md">
-              <ScrollArea style={{ height: '500px' }}>
-                <AccountSummary />
-              </ScrollArea>
+              <AccountSummary />
             </Tabs.Panel>
           </Tabs>
         </Box>

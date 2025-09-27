@@ -1,26 +1,73 @@
 @import "tailwindcss";
 
+/* Custom Theme System - Light Mode (Default) */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Site Background */
+  --site-bg: #ffffff;
+  --site-bg-secondary: #f8f9fa;
+  
+  /* Card Backgrounds */
+  --card-bg: #ffffff;
+  --card-bg-secondary: #f1f3f4;
+  
+  /* Text Colors */
+  --text-primary: #1a1a1a;
+  --text-secondary: #4a4a4a;
+  --text-muted: #6b7280;
+  --text-bright: #ffffff;
+  
+  /* Borders */
+  --border-primary: #e5e7eb;
+  --border-secondary: #d1d5db;
+  
+  /* Hover States */
+  --hover-bg: #f3f4f6;
+  
+  /* Trading Colors */
+  --profit-color: #00ca40;
+  --loss-color: #f21616;
+  --neutral-color: #6b7280;
+}
+
+/* Custom Theme System - Dark Mode */
+[data-theme="dark"] {
+  /* Site Background */
+  --site-bg: #181818;
+  --site-bg-secondary: #1a1a1a;
+  
+  /* Card Backgrounds */
+  --card-bg: #141414;
+  --card-bg-secondary: #2a2a2a;
+  
+  /* Text Colors - Much Brighter */
+  --text-primary: #ffffff;
+  --text-secondary: #e5e5e5;
+  --text-muted: #a3a3a3;
+  --text-bright: #ffffff;
+  
+  /* Borders */
+  --border-primary: #404040;
+  --border-secondary: #525252;
+  
+  /* Hover States */
+  --hover-bg: #2a2a2a;
+  
+  /* Trading Colors */
+  --profit-color: #00ca40;
+  --loss-color: #f21616;
+  --neutral-color: #a3a3a3;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-background: var(--site-bg);
+  --color-foreground: var(--text-primary);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
-}
-
 body {
-  background: var(--background);
-  color: var(--foreground);
+  background: var(--site-bg);
+  color: var(--text-primary);
   font-family: Arial, Helvetica, sans-serif;
+  transition: background-color 0.2s ease, color 0.2s ease;
 }
