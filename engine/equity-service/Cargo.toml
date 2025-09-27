@@ -1,0 +1,51 @@
+[package]
+name = "equity-service"
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+description = "Equity Valuation Service - real-time equity calculation and tracking"
+authors = ["Waiver Exchange Team"]
+
+[dependencies]
+# Local dependencies
+execution-manager = { path = "../execution-manager" }
+account-service = { path = "../account-service" }
+whistle = { path = "../whistle" }
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "migrate", "bigdecimal"] }
+tokio = { version = "1.0", features = ["full", "sync", "rt"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Date/Time
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID
+uuid = { version = "1.0", features = ["v4", "serde"] }
+
+# Error handling
+thiserror = "1.0"
+anyhow = "1.0"
+
+# Logging
+tracing = "0.1"
+
+# Decimal arithmetic for financial calculations
+rust_decimal = { version = "1.32", features = ["serde"] }
+bigdecimal = { version = "0.4", features = ["serde"] }
+
+# Async runtime
+futures = "0.3"
+
+# Environment variables
+dotenv = "0.15"
+
+# Concurrency
+dashmap = "5.5"
+async-trait = "0.1"
+
+[dev-dependencies]
+tokio-test = "0.4"
