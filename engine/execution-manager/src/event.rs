@@ -70,6 +70,10 @@ pub struct TradeEvent {
     pub maker_order_id: OrderId,
     /// Taker order ID (the order that crossed the spread)
     pub taker_order_id: OrderId,
+    /// Maker account ID (the account that had the order on the book)
+    pub maker_account_id: i64,
+    /// Taker account ID (the account that crossed the spread)
+    pub taker_account_id: i64,
 }
 
 /// Order submission acknowledgment

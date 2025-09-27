@@ -9,6 +9,7 @@ use order_router::RouterConfig;
 use persistence::PersistenceConfig;
 use simulation_clock::ClockConfig;
 use symbol_coordinator::CoordinatorConfig;
+use equity_service::EquityServiceConfig;
 
 /// Main service configuration
 #[derive(Debug, Clone, Default)]
@@ -27,6 +28,9 @@ pub struct ServiceConfig {
 
     /// Persistence configuration
     pub persistence: PersistenceConfig,
+
+    /// Equity Service configuration
+    pub equity_service: EquityServiceConfig,
 
     /// Service-level configuration
     pub service: ServiceSettings,

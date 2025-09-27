@@ -32,6 +32,11 @@ impl Balance {
         self.basis_points / 10000
     }
 
+    /// Get the value in basis points
+    pub fn to_basis_points(self) -> i64 {
+        self.basis_points
+    }
+
     /// Get the value as a decimal
     pub fn to_decimal(self) -> Decimal {
         Decimal::from(self.basis_points) / Decimal::from(10000)

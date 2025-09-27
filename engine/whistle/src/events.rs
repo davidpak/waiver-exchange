@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use crate::{OrderId, Price, Qty, Side, TickId};
+use crate::{AccountId, OrderId, Price, Qty, Side, TickId};
 
 /// Trade execution event - emitted when orders match
 #[derive(Debug, Clone, Copy)]
@@ -13,6 +13,8 @@ pub struct EvTrade {
     pub taker_side: Side,
     pub maker_order: OrderId,
     pub taker_order: OrderId,
+    pub maker_account: AccountId,
+    pub taker_account: AccountId,
 }
 
 /// Book level change event - emitted when level quantities change

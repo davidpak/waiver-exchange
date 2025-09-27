@@ -13,6 +13,9 @@ members = [
     "engine/player-scraper",
     "engine/player-registry",
     "engine/account-service",
+    "engine/equity-service",
     "engine/waiver-exchange-service",
     "tools/integration-test",
+    "tools/evs-test-bot",
+    "tools/evs-integration-test",
 ]

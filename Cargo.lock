@@ -893,6 +893,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "equity-service"
+version = "0.1.0"
+dependencies = [
+ "account-service",
+ "anyhow",
+ "async-trait",
+ "bigdecimal",
+ "chrono",
+ "dashmap",
+ "dotenv",
+ "execution-manager",
+ "futures",
+ "rust_decimal",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-test",
+ "tracing",
+ "uuid",
+ "whistle",
+]
+
+[[package]]
 name = "equivalent"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -931,11 +956,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "evs-integration-test"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "tokio",
+ "tokio-tungstenite 0.21.0",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
+name = "evs-test-bot"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tokio-tungstenite 0.20.1",
+ "tracing",
+ "tracing-subscriber",
+ "uuid",
+]
+
+[[package]]
 name = "execution-manager"
 version = "0.1.0"
 dependencies = [
  "account-service",
  "analytics-engine",
+ "async-trait",
  "chrono",
  "criterion",
  "dashmap",
@@ -4182,7 +4240,9 @@ checksum = "212d5dcb2a1ce06d81107c3d0ffa3121fe974b73f068c8282cb1c32328113b6c"
 dependencies = [
  "futures-util",
  "log",
+ "native-tls",
  "tokio",
+ "tokio-native-tls",
  "tungstenite 0.20.1",
 ]
 
@@ -4397,6 +4457,7 @@ dependencies = [
  "http 0.2.12",
  "httparse",
  "log",
+ "native-tls",
  "rand 0.8.5",
  "sha1",
  "thiserror 1.0.69",
@@ -4571,6 +4632,7 @@ dependencies = [
  "clap",
  "config",
  "dotenv",
+ "equity-service",
  "execution-manager",
  "futures",
  "metrics",

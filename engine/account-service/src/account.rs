@@ -30,6 +30,7 @@ pub struct Account {
     pub fantasy_points: Option<i32>,
     pub weekly_wins: Option<i32>,
     pub currency_balance: Option<i64>, // In cents
+    pub realized_pnl: Option<i64>, // In cents
     pub created_at: Option<chrono::NaiveDateTime>,
     pub last_updated: Option<chrono::NaiveDateTime>,
 }
@@ -104,7 +105,7 @@ impl AccountService {
     pub async fn get_or_create_account_by_google_info(
         &self,
         google_id: &str,
-        email: &str,
+        _email: &str,
         name: &str,
     ) -> Result<Account> {
         // Check if account exists
@@ -317,7 +318,7 @@ impl AccountService {
         trade_details: TradeDetails,
     ) -> Result<()> {
         // Get reservation from database
-        let row = sqlx::query!(
+        let _row = sqlx::query!(
             "SELECT * FROM reservations WHERE id = $1 AND status = 'active'",
             reservation_id.0 as i64
         )
@@ -393,7 +394,7 @@ impl AccountService {
             sqlx::query!(
                 "UPDATE positions SET quantity = $1, avg_cost = $2, last_updated = NOW() 
                  WHERE account_id = $3 AND symbol_id = $4",
-                position.quantity.to_cents(),
+                position.quantity.to_basis_points(),
                 position.avg_cost.to_cents(),
                 trade_details.account_id,
                 trade_details.symbol_id
@@ -414,7 +415,7 @@ impl AccountService {
                  VALUES ($1, $2, $3, $4, NOW())",
                 trade_details.account_id,
                 trade_details.symbol_id,
-                position.quantity.to_cents(),
+                position.quantity.to_basis_points(),
                 position.avg_cost.to_cents()
             )
             .execute(&self.db_pool)
@@ -428,7 +429,7 @@ impl AccountService {
             trade_details.account_id,
             trade_details.symbol_id,
             format!("{:?}", trade_details.side),
-            trade_details.quantity.to_cents(),
+            trade_details.quantity.to_basis_points(),
             trade_details.price.to_cents(),
             trade_details.order_id
         )

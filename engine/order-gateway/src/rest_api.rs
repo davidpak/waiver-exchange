@@ -57,9 +57,12 @@ pub struct AccountSummaryResponse {
     pub account_id: i64,
     pub balance: u64,
     pub total_equity: u64,
+    pub position_value: u64,
     pub day_change: i64,
     pub day_change_percent: f64,
     pub buying_power: u64,
+    pub unrealized_pnl: i64,
+    pub realized_pnl: i64,
     pub last_updated: String,
 }
 
@@ -86,6 +89,8 @@ pub struct EquitySnapshot {
     pub total_equity: u64,       // In cents
     pub cash_balance: u64,       // In cents
     pub position_value: u64,     // In cents
+    pub unrealized_pnl: i64,     // In cents
+    pub realized_pnl: i64,       // In cents
     pub day_change: i64,         // In cents
     pub day_change_percent: f64, // Percentage
 }
@@ -275,24 +280,59 @@ pub async fn get_account_summary(
         Ok(row) => {
             let balance = row.currency_balance.unwrap_or(0) as u64;
 
-            // Calculate total equity: balance + position values
-            let total_equity = calculate_total_equity(&db_pool, account_id, balance).await;
+            // Try to get the latest equity data from equity_timeseries
+            let equity_data = sqlx::query!(
+                "SELECT total_equity, cash_balance, position_value, unrealized_pnl, realized_pnl, day_change, day_change_percent, created_at
+                 FROM equity_timeseries 
+                 WHERE account_id = $1 
+                 ORDER BY created_at DESC 
+                 LIMIT 1",
+                account_id
+            )
+            .fetch_optional(&*db_pool)
+            .await
+            .unwrap_or(None);
 
-            // Calculate day change (for now, return 0 until we implement daily snapshots)
-            let day_change = 0i64;
-            let day_change_percent = 0.0;
+            let (total_equity, position_value, day_change, day_change_percent, unrealized_pnl, realized_pnl, last_updated) = if let Some(equity) = equity_data {
+                (
+                    equity.total_equity as u64,
+                    equity.position_value as u64,
+                    equity.day_change,
+                    equity.day_change_percent.to_f64().unwrap_or(0.0),
+                    equity.unrealized_pnl,
+                    equity.realized_pnl,
+                    match equity.created_at {
+                        Some(dt) => dt.format("%Y-%m-%dT%H:%M:%S%.fZ").to_string(),
+                        None => chrono::Utc::now().to_rfc3339(),
+                    }
+                )
+            } else {
+                // Fallback to calculating on-demand if no equity_timeseries data
+                let calculated_equity = calculate_total_equity(&db_pool, account_id, balance).await;
+                (
+                    calculated_equity,
+                    0u64, // position_value
+                    0i64,
+                    0.0,
+                    0i64, // unrealized_pnl
+                    0i64, // realized_pnl
+                    row.last_updated
+                        .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S%.fZ").to_string())
+                        .unwrap_or_else(|| chrono::Utc::now().to_rfc3339())
+                )
+            };
 
             let response = AccountSummaryResponse {
                 account_id: row.id,
                 balance,
                 total_equity,
+                position_value,
                 day_change,
                 day_change_percent,
                 buying_power: balance, // For now, buying power = balance (no margin)
-                last_updated: row
-                    .last_updated
-                    .map(|dt| dt.format("%Y-%m-%dT%H:%M:%S%.fZ").to_string())
-                    .unwrap_or_else(|| chrono::Utc::now().to_rfc3339()),
+                unrealized_pnl,
+                realized_pnl,
+                last_updated,
             };
             Ok(warp::reply::json(&response))
         }
@@ -302,9 +342,12 @@ pub async fn get_account_summary(
                 account_id,
                 balance: 100000, // $1000 in cents
                 total_equity: 100000,
+                position_value: 0,
                 day_change: 0,
                 day_change_percent: 0.0,
                 buying_power: 100000,
+                unrealized_pnl: 0,
+                realized_pnl: 0,
                 last_updated: chrono::Utc::now().to_rfc3339(),
             };
             Ok(warp::reply::json(&response))
@@ -388,10 +431,10 @@ pub async fn get_equity_history(
         .unwrap_or_else(|_| chrono::Utc::now().date_naive());
 
     let rows = sqlx::query!(
-        "SELECT date, total_equity, cash_balance, position_value, day_change, day_change_percent
-         FROM daily_equity_snapshots 
-         WHERE account_id = $1 AND date BETWEEN $2 AND $3
-         ORDER BY date ASC",
+        "SELECT created_at, total_equity, cash_balance, position_value, unrealized_pnl, realized_pnl, day_change, day_change_percent
+         FROM equity_timeseries 
+         WHERE account_id = $1 AND DATE(created_at) BETWEEN $2 AND $3
+         ORDER BY created_at ASC",
         params.account_id,
         start_date,
         end_date
@@ -414,10 +457,15 @@ pub async fn get_equity_history(
     let snapshots: Vec<EquitySnapshot> = rows
         .into_iter()
         .map(|row| EquitySnapshot {
-            date: row.date.format("%Y-%m-%d").to_string(),
+            date: match row.created_at {
+                Some(dt) => dt.format("%Y-%m-%d").to_string(),
+                None => chrono::Utc::now().format("%Y-%m-%d").to_string(),
+            },
             total_equity: row.total_equity as u64,
             cash_balance: row.cash_balance as u64,
             position_value: row.position_value as u64,
+            unrealized_pnl: row.unrealized_pnl,
+            realized_pnl: row.realized_pnl,
             day_change: row.day_change,
             day_change_percent: row.day_change_percent.to_f64().unwrap_or(0.0),
         })

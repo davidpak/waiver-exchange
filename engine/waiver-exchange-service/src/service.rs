@@ -7,6 +7,7 @@ use tracing::{error, info, warn};
 
 use crate::config::ServiceConfig;
 use account_service::{AccountService, AccountServiceConfig};
+use equity_service::{EquityValuationService, EquityServiceConfig};
 use execution_manager::ExecutionManager;
 use order_gateway::{GatewayConfig, OrderGateway};
 use order_router::OrderRouter;
@@ -40,6 +41,9 @@ pub struct ServiceState {
 
     /// AccountService instance
     pub account_service: Arc<AccountService>,
+
+    /// EquityValuationService instance
+    pub equity_service: Arc<EquityValuationService>,
 
     /// PlayerRegistry instance
     pub player_registry: Arc<RwLock<Option<PlayerRegistry>>>,
@@ -86,13 +90,31 @@ impl ServiceState {
         );
         info!("AccountService initialized successfully");
 
+        // Initialize EquityValuationService
+        info!("Initializing EquityValuationService...");
+        let equity_service_config = EquityServiceConfig::from_env()
+            .context("Failed to load EquityService configuration")?;
+        let equity_svc = Arc::new(
+            EquityValuationService::new(equity_service_config)
+                .await
+                .context("Failed to create EquityValuationService")?
+        );
+        info!("EquityValuationService initialized successfully");
+
         // Initialize ExecutionManager with persistence integration
         info!("Initializing ExecutionManager...");
-        let execution_manager = Arc::new(ExecutionManager::new_with_persistence(
+        let mut execution_manager = ExecutionManager::new_with_persistence(
             config.execution_manager.clone(),
             persistence.clone(),
             account_svc.clone(),
-        ));
+        );
+        
+        // Register EVS as a post-settlement callback
+        info!("Registering EVS as post-settlement callback with ExecutionManager...");
+        execution_manager.add_post_settlement_callback(equity_svc.clone());
+        info!("✅ EVS successfully registered as post-settlement callback");
+        
+        let execution_manager = Arc::new(execution_manager);
 
         // Initialize SymbolCoordinator (with ExecutionManager reference)
         info!("Initializing SymbolCoordinator...");
@@ -145,6 +167,7 @@ impl ServiceState {
             persistence,
             order_gateway: Arc::new(RwLock::new(Some(order_gateway))),
             account_service: account_svc,
+            equity_service: equity_svc,
             player_registry: Arc::new(RwLock::new(None)), // PlayerRegistry is now owned by OrderGateway
             is_running: Arc::new(RwLock::new(false)),
         };

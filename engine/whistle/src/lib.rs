@@ -636,6 +636,8 @@ impl Whistle {
                                 taker_side: order_side,
                                 maker_order: maker_id,
                                 taker_order: order_id,
+                                maker_account: self.arena.get(maker_handle).acct,
+                                taker_account: order_acct,
                             };
                             self.emitter
                                 .emit(EngineEvent::Trade(trade))
@@ -719,6 +721,8 @@ impl Whistle {
                             taker_side: order_side,
                             maker_order: other_order_id,
                             taker_order: order_id,
+                            maker_account: self.arena.get(other_handle).acct,
+                            taker_account: order_acct,
                         };
                         self.emitter
                             .emit(EngineEvent::Trade(trade))

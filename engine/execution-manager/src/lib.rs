@@ -1,5 +1,3 @@
-// ExecutionManager - post-match event distribution and fanout service
-
 mod analytics_converter;
 mod config;
 mod dispatch;
@@ -13,7 +11,7 @@ mod tick_tracker;
 
 pub use config::ShutdownConfig;
 pub use config::{BackpressureConfig, ExecManagerConfig, FanoutConfig};
-pub use dispatch::{DispatchStats, EventDispatcher, FanoutDestination};
+pub use dispatch::{DispatchStats, EventDispatcher, FanoutDestination, PostSettlementCallback};
 pub use event::{
     BookDelta, DispatchEvent, ExecutionReport, OrderCancelled, SystemLog, TickBoundaryEvent,
     TradeEvent,
@@ -246,6 +244,13 @@ impl ExecutionManager {
                         return Err(e);
                     }
                 }
+                DispatchEvent::TickBoundary(boundary) => {
+                    tracing::info!("📢 ExecutionManager: Processing TickBoundary event for tick {}", boundary.tick);
+                    
+                    // Notify post-settlement callbacks (like EVS) that tick is complete
+                    tracing::info!("📢 ExecutionManager: Notifying EVS callbacks that tick {} is complete", boundary.tick);
+                    self.dispatcher.notify_tick_complete(boundary.tick).await;
+                }
                 _ => {}
             }
 
@@ -344,7 +349,7 @@ impl ExecutionManager {
 
         // Convert Whistle types to AccountService types
         let price = Balance::from_cents(trade_event.price as i64);
-        let quantity = Balance::from_basis_points(trade_event.quantity as i64);
+        let quantity = Balance::from_basis_points(trade_event.quantity as i64 * 10000); // Convert real shares to basis points
         let symbol_id = trade_event.symbol as i64;
 
         // Determine buy and sell sides
@@ -353,10 +358,11 @@ impl ExecutionManager {
             Side::Sell => (trade_event.maker_order_id, trade_event.taker_order_id),
         };
 
-        // Get account IDs from order IDs (we'll need to implement this mapping)
-        // For now, we'll use a simple mapping - in production this would come from order metadata
-        let buy_account_id = self.get_account_id_from_order_id(buy_order_id).await?;
-        let sell_account_id = self.get_account_id_from_order_id(sell_order_id).await?;
+        // Get account IDs directly from the trade event
+        let (buy_account_id, sell_account_id) = match trade_event.aggressor_side {
+            Side::Buy => (trade_event.taker_account_id, trade_event.maker_account_id),
+            Side::Sell => (trade_event.maker_account_id, trade_event.taker_account_id),
+        };
 
         // Create trade details for both sides
         let buy_trade = TradeDetails {
@@ -395,19 +401,30 @@ impl ExecutionManager {
             sell_account_id
         );
 
+        // Notify post-settlement callbacks (like EVS)
+        tracing::info!("📢 ExecutionManager: Notifying EVS callbacks for buy account {} and sell account {}", buy_account_id, sell_account_id);
+        
+        self.dispatcher.notify_trade_settled(
+            buy_account_id,
+            trade_event.symbol,
+            TradeSide::Buy,
+            trade_event.quantity as i64,
+            trade_event.price as i64
+        ).await;
+
+        self.dispatcher.notify_trade_settled(
+            sell_account_id,
+            trade_event.symbol,
+            TradeSide::Sell,
+            trade_event.quantity as i64,
+            trade_event.price as i64
+        ).await;
+        
+        tracing::info!("📢 ExecutionManager: EVS callbacks completed");
+
         Ok(())
     }
 
-    /// Get account ID from order ID (placeholder implementation)
-    ///
-    /// In a real system, this would query the order metadata or maintain a mapping.
-    /// For now, we'll use a simple hash-based approach for testing.
-    async fn get_account_id_from_order_id(&self, order_id: u64) -> Result<i64, ExecutionError> {
-        // Simple hash-based mapping for testing
-        // In production, this would be a proper database lookup
-        let account_id = (order_id % 1000) as i64 + 1; // Map to account IDs 1-1000
-        Ok(account_id)
-    }
 
     /// Get statistics about the current state
     pub fn get_stats(&self) -> ExecutionStats {
@@ -544,6 +561,11 @@ impl ExecutionManager {
         .map_err(|e| ExecutionError::PersistenceFailed(e.to_string()))?;
 
         Ok(())
+    }
+
+    /// Add a post-settlement callback (like EVS)
+    pub fn add_post_settlement_callback(&mut self, callback: Arc<dyn PostSettlementCallback>) {
+        self.dispatcher.add_post_settlement_callback(callback);
     }
 }
 

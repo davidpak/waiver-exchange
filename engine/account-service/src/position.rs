@@ -53,7 +53,7 @@ impl Position {
             }
             TradeSide::Sell => {
                 // Calculate realized P&L
-                let realized_pnl =
+                let _realized_pnl =
                     (price.to_cents() - self.avg_cost.to_cents()) * quantity.to_cents();
 
                 // Update quantity

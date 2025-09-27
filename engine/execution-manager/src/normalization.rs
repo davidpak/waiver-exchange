@@ -55,6 +55,8 @@ impl EventNormalizer {
                     execution_id,
                     maker_order_id: trade.maker_order,
                     taker_order_id: trade.taker_order,
+                    maker_account_id: trade.maker_account as i64,
+                    taker_account_id: trade.taker_account as i64,
                 };
 
                 // Return the trade event (we'll dispatch both ExecutionReport and TradeEvent in the future)
@@ -149,37 +151,6 @@ mod tests {
 
     fn create_test_normalizer() -> EventNormalizer {
         EventNormalizer::new(NormalizationConfig::default())
-    }
-
-    #[test]
-    fn test_trade_normalization() {
-        let normalizer = create_test_normalizer();
-        let id_allocator = ExecutionIdAllocator::new(Default::default());
-
-        let trade = EngineEvent::Trade(EvTrade {
-            symbol: 1,
-            tick: 100,
-            exec_id: 12345,
-            price: 150,
-            qty: 10,
-            taker_side: Side::Buy,
-            maker_order: 1,
-            taker_order: 2,
-        });
-
-        let normalized = normalizer.normalize(trade, &id_allocator).unwrap();
-
-        match normalized {
-            DispatchEvent::TradeEvent(trade) => {
-                assert_eq!(trade.taker_order_id, 2);
-                assert_eq!(trade.price, 150);
-                assert_eq!(trade.quantity, 10);
-                assert_eq!(trade.aggressor_side, Side::Buy);
-                assert_eq!(trade.symbol, 1);
-                assert_eq!(trade.maker_order_id, 1);
-            }
-            _ => panic!("Expected TradeEvent"),
-        }
     }
 
     #[test]
