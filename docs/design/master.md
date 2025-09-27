@@ -1,4 +1,4 @@
-# The Waiver Exchange - System Architecture and Design Overview (v0.2)
+# The Waiver Exchange - System Architecture and Design Overview (v0.3)
 
 Owner: David Pak
 
@@ -80,53 +80,54 @@ At the core is `Whistle`, the per-symbol matching engine that executes trades us
 
 | **Component** | **Description** | **Tech Stack** |
 | --- | --- | --- |
-| `OrderGateway` | External ingress (API or sim); validates envelope, rate-limits, authenticates | **C++** (low-latency I/O) *(Rust variant acceptable)* |
-| `OrderRouter` | Routes to per-symbol SPSC queue; stamps `enq_seq`; handles backpressure | **C++** (lightweight fan-in/out) *(Rust variant acceptable)* |
-| `LatencyModel` | Applies deterministic synthetic latency per account/strategy before enqueue | **Rust** (precision, fairness enforcement) |
+| `OrderGateway` | WebSocket API for order submission, authentication, rate limiting, and market data | **Rust** (tokio-tungstenite, async/await) |
+| `OrderRouter` | Routes to per-symbol SPSC queue; stamps `enq_seq`; handles backpressure | **Rust** (lightweight fan-in/out) |
 
 ### 2.3 Post-Match & Observability
 
 | **Component** | **Description** | **Tech Stack** |
 | --- | --- | --- |
-| `ExecutionManager` | Receives canonical events; assigns `execution_id` (default centralized); fans out to sinks | **C++** (batching, zero-copy encode: Flatbuffers/Cap’n Proto) |
-| `AnalyticsEngine` | Aggregates metrics (latency, volumes, rejects); writes columnar stores | **Rust** *(or C++ if shared with ExecMgr pipeline)* |
-| `AccountService` | Read-only risk cache for admission; authoritative balances/P&L updates out of band | **Rust** (ownership model, SIMD where useful) |
-| `PersistenceLayer` | WAL segments, snapshots, and metrics storage | **Rust/C++** (Flatbuffers/Parquet/ClickHouse/RocksDB) |
-| `ReplayEngine` | Deterministic replayer: WAL → engine inputs; validates event/book hashes | **Rust** (snapshotting, file I/O) |
+| `ExecutionManager` | Receives canonical events; assigns `execution_id`; fans out to sinks; integrated analytics | **Rust** (event processing, JSON serialization) |
+| `AccountService` | Risk management, balance tracking, position management, trade settlement | **Rust** (PostgreSQL integration, async/await) |
+| `EquityValuationService` | Real-time equity calculation, REST API integration, historical tracking, post-settlement callbacks | **Rust** (in-memory caches, PostgreSQL persistence) |
+| `PersistenceLayer` | WAL segments, snapshots, PostgreSQL storage, replay functionality | **Rust** (file I/O, SQL integration) |
 
 ### 2.4 Control & Simulation
 
 | **Component** | **Description** | **Tech Stack** |
 | --- | --- | --- |
 | `SimulationClock` | Drives logical ticks; enforces per-tick work caps; orders symbol iteration | **Rust** (pure, testable) |
-| `AdminShell` | Operational CLI: start/stop symbols, load snapshots, inspect queues | **C++** *(or Rust for tighter integration)* |
 
-### 2.5 UI, Bots & External Data
+### 2.5 Data & Registry Services
 
 | **Component** | **Description** | **Tech Stack** |
 | --- | --- | --- |
-| `StrategyEngine` | Runs sandboxed bots (market-making, momentum, hype); SMP-aware; deterministic | **Rust** core + **WASM/Python** plug-ins |
-| `MarketDataViewer` | Surfaces real-world player signals (injuries, rankings) for human/bot context | **Rust/C++** (API adapters) |
-| `DataIngestion` | Pulls/normalizes external data; never drives price, only informs | **Rust** *(or Python for ETL jobs)* |
-| `WebUI` | Real-time depth/trades, account view, controls for sim/bots | **TypeScript + React** (WebSockets) |
+| `PlayerRegistry` | Player metadata management, symbol ID mapping, fantasy football data | **Rust** (JSON file storage, in-memory caching) |
+| `PlayerScraper` | NFL player data ingestion, projections, injury reports | **Rust** (web scraping, data normalization) |
 
-*Notes:*  Execution IDs are centralized by default for cross-symbol monotonicity; sharded mode is available when configured. All per-symbol hot paths remain allocation-free and tick-bounded; serialization, persistence, and analytics are downstream.
+### 2.6 Frontend & External Interface
+
+| **Component** | **Description** | **Tech Stack** |
+| --- | --- | --- |
+| `WebUI` | Real-time trading interface, account management, market data visualization | **Next.js + TypeScript + React** (WebSockets, Mantine UI, Tailwind CSS) |
+
+*Notes:*  Execution IDs are centralized by default for cross-symbol monotonicity. All per-symbol hot paths remain allocation-free and tick-bounded; serialization, persistence, and analytics are downstream. The system is built entirely in Rust with PostgreSQL as the primary database, JSON for WebSocket communication, and Next.js for the frontend interface.
 
 ---
 
 ## 3. System Flow (High-Level)
 
-1. **Submit** — A user or bot submits an order (`LIMIT`, `MARKET`, `IOC`, `POST-ONLY`).
-2. **Ingress** — `OrderGateway` validates shape and forwards to `OrderRouter`.
-3. **Placement** — `OrderRouter` looks up or activates the symbol’s `Whistle` via `SymbolCoordinator` (one engine per symbol).
-4. **Normalize Time** — If enabled, `LatencyModel` stamps a **normalized timestamp (TsNorm)**; `OrderRouter` attaches **Enqueue Sequence (EnqSeq)**.
-5. **Enqueue** — The message is written to the symbol’s **SPSC ring** (single producer = router, single consumer = `Whistle`). Backpressure policy: **full ⇒ Reject(Backpressure)**, never block.
+1. **Submit** — A user submits an order (`LIMIT`, `MARKET`, `IOC`, `POST-ONLY`) via WebSocket to `OrderGateway`.
+2. **Authentication** — `OrderGateway` validates API key and authenticates the user session.
+3. **Ingress** — `OrderGateway` validates order shape, applies rate limiting, and forwards to `OrderRouter`.
+4. **Placement** — `OrderRouter` looks up or activates the symbol's `Whistle` via `SymbolCoordinator` (one engine per symbol).
+5. **Enqueue** — The message is written to the symbol's **SPSC ring** (single producer = router, single consumer = `Whistle`). Backpressure policy: **full ⇒ Reject(Backpressure)**, never block.
 6. **Tick** — On the next logical tick `T`, `SimulationClock` calls `Whistle.tick(T)` for each active symbol.
 7. **Ingest & Validate** — `Whistle` drains up to `batch_max` messages and runs deterministic checks:
     - Tick-size alignment
     - Price bands vs. reference price (cold/warm rules)
     - Type semantics (`POST-ONLY` must not cross; `MARKET/IOC` never rest)
-    - Risk cache verdict (non-blocking; miss ⇒ reject)
+    - Risk cache verdict from `AccountService` (non-blocking; miss ⇒ reject)
     - Structural limits (arena capacity, duplicate order IDs)
 8. **Match** — Valid orders are processed under **strict price-time priority**:
     - Crossed liquidity trades first; partials retain priority
@@ -138,11 +139,15 @@ At the core is `Whistle`, the per-symbol matching engine that executes trades us
     2. **BookDeltas** (coalesced end-of-tick quantities per level)
     3. **OrderLifecycle** (Accepted/Partial/Filled/Cancelled/Rejected)
     4. *TickComplete { symbol, T }`
-11. **Fan-out & Persist** — `ExecutionManager` stamps global `execution_id` (if centralized), then fans out to:
-    - **ReplayEngine** (lossless WAL, snapshots)
-    - **AnalyticsEngine** (metrics, aggregates)
-    - **WebUI** (real-time depth, trades; may drop frames by policy)
-12. **Advance** — `SimulationClock` advances to `T+1`. Coordinator may spawn/evict engines at **tick boundaries** only.
+11. **Settlement & Fan-out** — `ExecutionManager` processes events:
+    - Calls `AccountService::settle_trade()` for trade settlement
+    - Notifies `EquityValuationService` via post-settlement callbacks
+    - Stamps global `execution_id` and fans out to:
+      - **PersistenceLayer** (lossless WAL, snapshots)
+      - **Analytics** (integrated metrics, aggregates)
+      - **WebUI** (real-time depth, trades, equity updates)
+12. **Equity Updates** — `EquityValuationService` calculates real-time equity, persists to database, and provides REST API access for equity data.
+13. **Advance** — `SimulationClock` advances to `T+1`. Coordinator may spawn/evict engines at **tick boundaries** only.
 
 **Notes**
 
@@ -271,8 +276,9 @@ Within a single `tick()` per symbol, events **must** be emitted in this sequence
 - Every event carries a **schema version** in the envelope.
 - Breaking changes require an ADR and bump; ExecMgr must be able to **route/upgrade** or **reject** mixed versions.
 - WAL stores **pre-`execution_id`** bytes for replay; ExecMgr may persist a **post-ID** stream for analytics. Both are versioned.
+- **Serialization**: Events are serialized as JSON for WebSocket communication and stored as structured data in PostgreSQL.
 
-**Design choice:** record the engine’s native stream to guarantee replay; derived streams are convenience, not source of truth.
+**Design choice:** record the engine's native stream to guarantee replay; derived streams are convenience, not source of truth.
 
 ---
 
@@ -323,7 +329,7 @@ This system runs on **logical time**. All market effects are **tick-bounded**: n
 ### 6.1 Time Sources
 
 - **`SimulationClock` (authoritative):** Drives ticks for all active symbols. Calls `Whistle.tick(T)` once per symbol per tick.
-- **`TsNorm` (normalized timestamp):** Per-order logical timestamp applied *before* enqueue by `LatencyModel`. Used for price-time priority within a tick.
+- **`TsNorm` (normalized timestamp):** Per-order logical timestamp applied *before* enqueue by `OrderGateway`. Used for price-time priority within a tick.
 - **`EnqSeq` (enqueue sequence):** Monotonic tie-breaker stamped by `OrderRouter` as the order enters the SPSC. Unique within `(symbol, T)`.
 
 ### 6.2 Invariants (non-negotiable)
@@ -356,14 +362,14 @@ Accepted orders are immediately matched if crossing; otherwise they rest.
 
 ### 6.5 Priority & Tie-Breaking
 
-- **Primary:** `TsNorm` (normalized time from `LatencyModel`).
+- **Primary:** `TsNorm` (normalized time from `OrderGateway`).
 - **Secondary:** `EnqSeq` (stamped at ingress; monotonic within the tick).
 - **Cancel vs Fill in same tick:** Earlier `(TsNorm, EnqSeq)` wins—consistent with SPSC order.
 
 ### 6.6 Cold Start & Halts
 
-- **Cold start:** Until first trade sets a reference price, `MARKET/IOC` are rejected. Only **in-band `LIMIT`** orders may rest.
-- **Halts:** While halted, all orders reject with `MarketHalted` except policy-allowed admin cancels.
+- **Cold start:** *Not currently implemented.* The system accepts `MARKET/IOC` orders even without a reference price. Configuration `allow_market_cold_start` exists but is not enforced in validation logic.
+- **Halts:** *Not currently implemented.* There is no halt mechanism or `MarketHalted` rejection reason in the current system.
 
 ### 6.7 Clock/Coordinator Contracts
 
@@ -380,7 +386,7 @@ Accepted orders are immediately matched if crossing; otherwise they rest.
 - Running two identical sessions (same inputs, config, and tick schedule) yields **byte-identical** event streams pre-`execution_id`.
 - Every `tick(T)` for a symbol produces **exactly one** `TickComplete`.
 - Backpressure behavior is test-covered: SPSC full ⇒ reject; ExecMgr overflow ⇒ symbol marks fatal, evicted at boundary.
-- Cold-start behavior is enforced by tests: `MARKET/IOC` reject; first `LIMIT` trade establishes reference price.
+- Cold-start behavior is *not currently enforced*: `MARKET/IOC` orders are accepted without reference price validation.
 
 ## 7. Matching & Book Updates (Master-Level)
 
@@ -413,7 +419,8 @@ Accepted orders are immediately matched if crossing; otherwise they rest.
 
 ### 7.5 Cancels & races
 
-- Cancels are part of the same `tick(T)` batch. If a cancel and a potential fill compete:
+- **Cancel logic is not currently implemented.** The system has placeholder code that returns `RejectReason::UnknownOrder` for all cancel requests.
+- When implemented, cancels will be part of the same `tick(T)` batch. If a cancel and a potential fill compete:
     - Earlier `(ts_norm, enq_seq)` **wins**.
     - Outcome is stable in replay and reflected in lifecycle events.
 
@@ -438,15 +445,17 @@ Accepted orders are immediately matched if crossing; otherwise they rest.
 
 ## 8. ExecutionManager & Event Pipeline
 
-`ExecutionManager` is the **single intake** for all per-symbol events emitted by `Whistle`. It stamps (or validates) execution IDs, preserves the **canonical per-tick ordering**, and fans out to **Replay**, **Analytics**, and **UI** without perturbing engine latency or determinism.
+`ExecutionManager` is the **single intake** for all per-symbol events emitted by `Whistle`. It stamps (or validates) execution IDs, preserves the **canonical per-tick ordering**, handles trade settlement via `AccountService`, and fans out to **Persistence**, **Analytics**, and **UI** without perturbing engine latency or determinism.
 
 ### Role in the System
 
 - **Ingest:** Consume `EngineEvent` batches from all `Whistle` instances via an MPSC queue.
 - **Order:** Maintain canonical ordering **within each symbol/tick**: Trades → BookDeltas → OrderLifecycle → TickComplete.
+- **Settlement:** Call `AccountService::settle_trade()` for each trade to update balances and positions.
+- **Callbacks:** Notify post-settlement callbacks (like `EquityValuationService`) after trade settlement.
 - **Stamp IDs:** Assign **global execution IDs** (if centralized mode) or validate sharded IDs.
-- **Fan-out:** Deliver a **lossless** stream to `ReplayEngine`, a **structured** stream to `AnalyticsEngine`, and an **event stream** to the Web UI (lossy allowed).
-- **Boundary:** Align all work to tick boundaries; no mid-tick reordering of a symbol’s batch.
+- **Fan-out:** Deliver a **lossless** stream to `PersistenceLayer`, a **structured** stream to integrated analytics, and an **event stream** to the Web UI (lossy allowed).
+- **Boundary:** Align all work to tick boundaries; no mid-tick reordering of a symbol's batch.
 
 ### Contracts & Guarantees
 
@@ -458,9 +467,10 @@ Accepted orders are immediately matched if crossing; otherwise they rest.
 
 **Output (downstream)**
 
-- **Replay stream:** **Lossless**, byte-stable per run. If the sink backpressures beyond policy, simulation halts (fatal).
-- **Analytics stream:** Structured metrics/logs; allowed to drop under pressure without affecting determinism.
+- **Persistence stream:** **Lossless**, byte-stable per run. If the sink backpressures beyond policy, simulation halts (fatal).
+- **Analytics stream:** Integrated metrics/logs; allowed to drop under pressure without affecting determinism.
 - **UI stream:** Real-time updates; lossy by policy.
+- **Equity stream:** Real-time equity updates via REST API (WebSocket broadcasting not currently implemented).
 
 **Never violates:**
 
@@ -474,17 +484,17 @@ Two supported modes:
 
 | Mode | Behavior | When to use |
 | --- | --- | --- |
-| **Sharded (engine-local)** | `Whistle` stamps `exec_id = (tick << SHIFT) | local_trade_seq`. ExecMgr **validates** only. |
-| **Centralized (global)** | ExecMgr assigns a **monotonic global ID** as events arrive. Deterministic merge order: `(tick, symbol_id, group_order, seq_in_tick)` where `group_order = Trades(0) < BookDeltas(1) < OrderLifecycle(2) < TickComplete(3)`. | If a single global sequence is required for external consumers. |
+| **Sharded (engine-local)** | `Whistle` stamps `exec_id = (shard_id << 48) | counter`. ExecMgr **validates** only. |
+| **Monotonic (global)** | ExecMgr assigns a **monotonic global ID** as events arrive. Deterministic merge order: `(tick, symbol_id, group_order, seq_in_tick)` where `group_order = Trades(0) < BookDeltas(1) < OrderLifecycle(2) < TickComplete(3)`. | If a single global sequence is required for external consumers. |
 
-> Centralized mode never reorders within a symbol; it merges already-ordered symbol batches by a stable key so replays are deterministic.
+> Monotonic mode never reorders within a symbol; it merges already-ordered symbol batches by a stable key so replays are deterministic.
 > 
 
 ### Backpressure & Failure Policy
 
 - **Ingress (Whistle → ExecMgr MPSC):** Must be sized so producers **never block**. If overflow is observed, policy is **fatal** (configuration error) after the current tick boundary is emitted.
-- **Replay sink:** **Lossless**. On persistent backpressure, ExecMgr signals **fatal** and stops the simulation cleanly at the next boundary.
-- **Analytics/UI sinks:** May degrade (drop/coalesce) but **must not** feed back into engine timing or event order.
+- **Persistence sink:** **Lossless**. On persistent backpressure, ExecMgr signals **fatal** and stops the simulation cleanly at the next boundary.
+- **Analytics/UI/Equity sinks:** May degrade (drop/coalesce) but **must not** feed back into engine timing or event order.
 
 ### Batching & Flushing
 
@@ -494,7 +504,7 @@ Two supported modes:
 ### Schema & Compatibility
 
 - Event families are versioned. Adding fields is **backward compatible** (reserved ranges); removing or changing semantics requires a **major** bump and explicit migration notes.
-- Wire format: FlatBuffers or Cap’n Proto (implementation doc picks one). The master doc’s rule: **no schema churn without ADR**; WAL remains readable across minor versions.
+- Wire format: JSON for WebSocket communication, SQL for database storage. The master doc's rule: **no schema churn without ADR**; WAL remains readable across minor versions.
 
 ### Idempotency & Replay
 
@@ -520,21 +530,130 @@ Two supported modes:
 | Scenario | Behavior | Notes |
 | --- | --- | --- |
 | Ingress MPSC overflow | **Fatal after boundary** | Mis-sized queue; isolate & stop |
-| Replay sink backpressure | **Fatal**, emit diagnostic | Lossless guarantee preserved |
-| Analytics/UI sink backpressure | Drop/coalesce, never blocks | Determinism unaffected |
+| Persistence sink backpressure | **Fatal**, emit diagnostic | Lossless guarantee preserved |
+| Analytics/UI/Equity sink backpressure | Drop/coalesce, never blocks | Determinism unaffected |
 | Invalid `seq_in_tick` from Whistle | Flag symbol as **faulted**, stop after boundary | Invariant breach upstream |
 | Duplicate exec_id (centralized) | Prevent assignment; log and fault | Indicates non-deterministic merge or bug |
+| AccountService settlement failure | **Fatal**, emit diagnostic | Critical for system integrity |
 
 ### Invariants
 
 1. For each `(symbol, tick)`, emitted order is **Trades → BookDeltas → OrderLifecycle → TickComplete**.
-2. No cross-symbol merge can reorder a symbol’s internal sequence.
-3. Replay stream is complete and in the same order the engines produced.
+2. No cross-symbol merge can reorder a symbol's internal sequence.
+3. Persistence stream is complete and in the same order the engines produced.
 4. If centralized, `exec_id` is strictly increasing over the whole run.
+5. All trades are settled exactly once via `AccountService::settle_trade()`.
+6. Post-settlement callbacks are notified after successful trade settlement.
 
 ---
 
-## 9. AccountService
+## 9. EquityValuationService
+
+`EquityValuationService` (EVS) provides **real-time equity calculation and tracking** for all accounts. It subscribes to `ExecutionManager` events via post-settlement callbacks, maintains in-memory caches for performance, and broadcasts equity updates via WebSocket to the frontend.
+
+### Role in the System
+
+- **Real-time Equity Calculation**: Calculates total equity (cash + position value) for each account
+- **Event-Driven Updates**: Subscribes to trade and price events from `ExecutionManager`
+- **In-Memory Caching**: Maintains fast-access caches for account data, positions, and prices
+- **REST API Integration**: Provides equity data via REST endpoints (WebSocket broadcasting not currently implemented)
+- **Historical Tracking**: Persists equity snapshots to database for historical analysis
+- **Tick-Aligned Processing**: Prevents double counting by processing updates per tick
+
+### Design Principles
+
+1. **Event-Driven Architecture**: Subscribes to `ExecutionManager` events rather than polling
+2. **In-Memory Performance**: Uses `DashMap` and `RwLock<HashMap>` for fast access
+3. **Tick-Bounded Updates**: All equity calculations happen within tick boundaries
+4. **REST API Access**: Equity data is accessible via REST endpoints for frontend consumption
+5. **Double Counting Prevention**: Tracks accounts and symbols updated per tick
+
+### Integration with ExecutionManager
+
+EVS integrates via a **post-settlement callback system**:
+
+```rust
+#[async_trait]
+pub trait PostSettlementCallback {
+    async fn on_trade_settled(&self, account_id: i64, symbol_id: u32, side: TradeSide, quantity: i64, price: i64) -> Result<()>;
+    async fn on_price_updated(&self, symbol_id: u32, price: i64) -> Result<()>;
+    async fn on_tick_complete(&self, tick_id: TickId) -> Result<()>;
+}
+```
+
+**Event Flow:**
+1. Trade executes in `Whistle`
+2. `ExecutionManager` calls `AccountService::settle_trade()`
+3. `ExecutionManager` notifies EVS via `on_trade_settled()`
+4. EVS updates in-memory caches
+5. On `on_tick_complete()`, EVS recalculates equity and persists to database
+
+### Data Structures
+
+- **AccountEquityData**: Cash balance, positions, last updated timestamp
+- **EquitySnapshot**: Complete equity state (total equity, cash, position value, P&L)
+- **EquityUpdate**: WebSocket message for frontend updates
+- **Position**: Symbol quantity, average cost, unrealized P&L
+
+### Database Schema
+
+```sql
+-- New table for equity time series
+CREATE TABLE equity_timeseries (
+    account_id BIGINT NOT NULL,
+    tick BIGINT NOT NULL,
+    timestamp TIMESTAMP WITH TIME ZONE NOT NULL,
+    total_equity BIGINT NOT NULL,  -- in cents
+    cash_balance BIGINT NOT NULL,  -- in cents
+    position_value BIGINT NOT NULL, -- in cents
+    day_change BIGINT NOT NULL,    -- in cents
+    day_change_percent DECIMAL(10,4) NOT NULL,
+    unrealized_pnl BIGINT NOT NULL, -- in cents
+    realized_pnl BIGINT NOT NULL,   -- in cents
+    PRIMARY KEY (account_id, tick)
+);
+
+-- Updated accounts table
+ALTER TABLE accounts ADD COLUMN realized_pnl BIGINT DEFAULT 0;
+
+-- Updated positions table  
+ALTER TABLE positions ADD COLUMN realized_pnl BIGINT DEFAULT 0;
+```
+
+### Performance Characteristics
+
+- **Calculation Time**: O(1) per price change, O(positions) per account per tick
+- **Memory Usage**: Bounded by number of accounts and active symbols
+- **REST API Latency**: < 100ms from tick completion to data availability
+- **Database Writes**: Async, batched per tick
+
+### Configuration
+
+- **Cache Size**: Maximum number of accounts and symbols to cache
+- **REST API Settings**: Connection limits, response caching
+- **Database Settings**: Connection pool, write batching
+- **Performance Tuning**: Tick processing timeouts, memory limits
+
+### Failure Modes
+
+| Scenario | Behavior | Notes |
+| --- | --- | --- |
+| Database connection loss | Continue with in-memory caches | Equity updates continue, persistence fails |
+| REST API connection failure | Retry with exponential backoff | Frontend may miss updates temporarily |
+| Cache memory pressure | Evict least recently used entries | Performance degradation, not fatal |
+| Calculation overflow | Log error, use last known value | Prevents system crash |
+
+### Invariants
+
+1. Equity calculations are **tick-bounded** and happen only after trade settlement
+2. Each account's equity is recalculated **at most once per tick**
+3. REST API responses are **account-specific** and never cross-contaminate
+4. Database writes are **idempotent** and can be safely retried
+5. In-memory caches are **eventually consistent** with database state
+
+---
+
+## 10. AccountService
 
 `AccountService` is the **source of truth** for balances, positions, and limits. It enables **deterministic admission** (read-only risk checks on the hot path) and **authoritative settlement** (applying fills to cash/positions). It never blocks `Whistle`; it operates on **snapshotted, tick-consistent state** and reconciles changes at tick boundaries.
 
@@ -551,8 +670,8 @@ Two supported modes:
 
 ### Design Principles
 
-1. **Non-blocking admission.** `Whistle` only does **read** lookups against a local, epoch-tagged risk cache. Cache miss or stale epoch ⇒ **Reject(RiskUnavailable)**.
-2. **Deterministic timing.** Risk state visible to `Whistle` changes **only** at tick boundaries (cache swap), never mid-tick.
+1. **Non-blocking admission.** `Whistle` performs risk checks via direct database queries. Risk cache and epoch system are **not currently implemented**.
+2. **Deterministic timing.** Risk state changes are applied immediately upon trade settlement.
 3. **Exactly-once settlement.** Trades are applied idempotently keyed by `(symbol, tick, seq_in_tick)` (or global `execution_id` if present).
 4. **Conservative reservation.** Buys reserve notional on **admission**; sells reserve **inventory** on admission. Reservations release or convert to settled deltas on fill/cancel.
 5. **Clear failure modes.** No “soft” declines—every denial is explicit (`InsufficientFunds`, `ExposureExceeded`, `RiskUnavailable`, `ShortingDisabled`, etc.).
@@ -561,10 +680,10 @@ Two supported modes:
 
 | Contract | Direction | Purpose |
 | --- | --- | --- |
-| `RiskCache{epoch, per-account caps, available_cash, available_qty(symbol), outstanding_notional}` | AS → Whistle | Admission checks (pure reads, NUMA-local) |
+| `Risk checks via database queries` | AS → Whistle | Admission checks (direct database access) |
 | `EngineEvent::Trade / OrderLifecycle` | Whistle → ExecMgr → AS | Authoritative settlement & reservation release |
 | `Snapshot{balances, positions, reservations, epoch}` | AS ↔ Persistence | Warm start & replay |
-| `NewEpoch{epoch_id, cache_blob}` | AS → Whistle (boundary) | Swap-in next tick’s read-only cache |
+| `Risk state updates` | AS → Whistle (boundary) | Update risk state for next tick |
 
 ### Reservation & Exposure Model (admission-time)
 
@@ -593,9 +712,9 @@ Two supported modes:
 
 ### Determinism & Replay
 
-- **Epoching:** Each published risk cache carries an `epoch` id. `Whistle` reads only the current epoch during `tick(T)`. Next epoch becomes visible **after `TickComplete(T)`**.
+- **Risk State:** Risk checks are performed via direct database queries during order admission. Risk cache and epoch system are **not currently implemented**.
 - **Idempotency:** Settlement applies each trade once keyed by tick+seq (or global ID). Replays re-apply safely and match persisted totals.
-- **Warm start:** Snapshot includes balances, positions, outstanding reservations, and `epoch`. After restore, the next cache publish resumes at `resume_tick`.
+- **Warm start:** Snapshot includes balances, positions, and outstanding reservations. After restore, risk state is rebuilt from database.
 
 ### Configuration Knobs
 
@@ -605,7 +724,7 @@ Two supported modes:
 - **Settlement:**
     - Realized P&L method (`FIFO` default for simulation clarity; `AVG` optional), rounding mode (banker’s or floor).
 - **Publishing:**
-    - Cache publish cadence (per tick, or every N ticks), and **atomic swap** mechanism.
+    - Risk state update cadence (per tick, or every N ticks).
 - **Replay:**
     - Mode A: **risk snapshot required** (preferred, smaller WAL).
     - Mode B: record **admission verdicts** in WAL and bypass live checks on replay.
@@ -614,7 +733,7 @@ Two supported modes:
 
 | Scenario | Admission | Settlement | Notes |
 | --- | --- | --- | --- |
-| Cache miss/stale epoch | **Reject(RiskUnavailable)** | — | Non-blocking, deterministic |
+| Database connection failure | **Reject(RiskUnavailable)** | — | Non-blocking, deterministic |
 | Insufficient funds/inventory | **Reject(InsufficientFunds)** | — | Uses reservation-inclusive available |
 | Exposure cap breach | **Reject(ExposureExceeded)** | — | Per-symbol or global caps |
 | Shorting disabled | **Reject(ShortingDisabled)** | — | Unless policy enables with cap |
@@ -623,14 +742,14 @@ Two supported modes:
 
 ### Interfaces (high-level)
 
-- **To `Whistle`**: `RiskCache` (immutable during tick), versioned; memory-local for speed.
+- **To `Whistle`**: Risk check results via database queries (direct access during admission).
 - **From `ExecutionManager`**: Ordered event stream (trades, lifecycle).
 - **To `PersistenceLayer`**: Periodic state snapshots + streaming deltas for audit.
 - **To `AnalyticsEngine`**: P&L snapshots, exposure metrics, admission reject stats.
 
 ### Observability (no hot-path perturbation)
 
-- Counters: rejects by reason, reservation notional by account/symbol, cache publish latency, idempotent trade drops.
+- Counters: rejects by reason, reservation notional by account/symbol, risk check latency, idempotent trade drops.
 - Gauges: total open notional, free cash per account, aggregate long/short exposure.
 - All published **after** tick; no logging in `Whistle`’s match loop.
 
@@ -644,7 +763,7 @@ Two supported modes:
 
 ---
 
-## 10. Persistence & Replay (WAL + Snapshots)
+## 11. Persistence & Replay (WAL + Snapshots)
 
 `PersistenceLayer` gives us **lossless history** and **bitwise replay** without touching the hot path. It is split into two cooperating parts:
 
@@ -754,7 +873,7 @@ At system scope, repeat for all symbols; centralized Execution IDs (if enabled) 
 
 ---
 
-## 11. SymbolCoordinator & Placement
+## 12. SymbolCoordinator & Placement
 
 `SymbolCoordinator` is the system’s **orchestrator** for per-symbol engines. It owns when engines exist, where they run, and how they’re wired. Its job is to keep thousands of independent `Whistle` instances **placed, pinned, observable, and fault-isolated**—without ever touching the hot path.
 
@@ -871,155 +990,38 @@ All counters/timers are emitted off the hot path; no formatting in `Whistle`.
 
 ---
 
-## 12. Latency Model & Fairness
+## 13. Data & Registry Services
 
-**Goal:** make timing **deterministic and comparable** across humans and bots without hiding edge or introducing randomness. Latency is simulated, **stamped once** before enqueue, and never altered inside `Whistle`.
+### 13.1 PlayerRegistry
 
-### What it does
+The `PlayerRegistry` manages **player metadata and symbol ID mapping** for fantasy football players. It provides fast lookup of player information and maintains the mapping between player names and internal symbol IDs.
 
-- Converts wall-clock arrival into a **normalized timestamp (`ts_norm`)** using a per-actor **latency profile**.
-- Ensures strict **price-time** fairness: tie-break = `(ts_norm, enq_seq)`.
-- Lets you model strategy edges (e.g., “fast market maker”) without violating determinism.
+**Key Features:**
+- **Symbol ID Mapping**: Maps player names to unique symbol IDs for trading
+- **Player Metadata**: Stores player information (name, team, position, etc.)
+- **In-Memory Caching**: Fast lookup performance with JSON file persistence
+- **Fantasy Data**: Integrates with fantasy football data sources
 
-### Inputs & profiles
+**Data Sources:**
+- JSON file with player metadata and assigned symbol IDs
+- Integration with fantasy football APIs for real-time data
+- Manual updates for player roster changes
 
-- **Actor profile:** `{ base_us, jitter_us=0, distribution=None, clamp_min_us, clamp_max_us }`
-    - Default: `jitter_us=0` (no randomness). If jitter is enabled for experiments, it must be seeded and **held constant** for replay builds.
-- **System knobs:** `max_normalized_skew`, `drop_if_skew_exceeds` (optional hard guard).
+### 13.2 PlayerScraper
 
-### Normalization pipeline (OrderGateway → OrderRouter)
+The `PlayerScraper` handles **NFL player data ingestion** from external sources. It scrapes player information, projections, and injury reports to keep the system up-to-date.
 
-1. Read wall-clock arrival (ingress).
-2. Compute simulated latency `L` from actor profile.
-3. Set `ts_norm = logical_tick_start_time + L`.
-4. Stamp **once** onto the order; attach **monotonic `enq_seq`** before SPSC enqueue.
+**Key Features:**
+- **Web Scraping**: Extracts player data from NFL and fantasy football websites
+- **Data Normalization**: Standardizes data formats across different sources
+- **Scheduled Updates**: Regular data refresh to maintain accuracy
+- **Error Handling**: Robust handling of network failures and data inconsistencies
 
-### Invariants (non-negotiable)
-
-1. `ts_norm` is **write-once** upstream; `Whistle` treats it as data, not a signal.
-2. Gate fairness by `(ts_norm, enq_seq)` only; no hidden clocks.
-3. Profiles are **static within a run** (can change only at tick boundaries with a control event).
-4. If a profile would produce negative/NaN/overflow: reject admission with explicit reason.
-5. Replays that reapply the same profiles yield **byte-identical** results.
-
-### Observability (off hot path)
-
-- Per-actor: p50/p95/p99 normalized latency, drops by reason.
-- Per-symbol: inter-arrival variance, queue depth at tick start.
-- Fleet: distribution of profiles; slowest actors.
-
-### Configuration (safe defaults)
-
-- `default_profile = base_us=500, jitter_us=0`
-- `max_normalized_skew = 5_000us` (example)
-- `drop_if_skew_exceeds = true` → `Reject(LatencyOutOfBounds)`
-
----
-
-## 13. StrategyEngine & Bots
-
-**Goal:** provide realistic, programmable market participants that compete under the **same rules and latencies** as humans—without compromising determinism, safety, or isolation.
-
-### Role in the system
-
-- Runs **user-supplied or built-in** strategies.
-- Consumes **public** data only (top of book, trades, deltas, session metadata, and *informative* real-world signals).
-- Submits actions via the **same `OrderGateway`** as any actor; no privileged path, no special fees/priority.
-
-### Contract (what a bot can see & do)
-
-**Inputs (read-only):**
-
-- Book snapshots/deltas (side, price, level qty).
-- Trades (price, qty, aggressor side).
-- Own order acks/fills/cancels/rejects.
-- Time: logical tick `T`; no wall-clock.
-- Optional external signals (injuries, rankings, projections) flagged **informative-only**.
-
-**Actions (write):**
-
-`SubmitLimit`, `SubmitMarket`, `SubmitIoc`, `SubmitPostOnly`, `Cancel(order_id)` — identical message shapes to human flow. No amendments; cancel+replace only.
-
-**Fairness:**
-
-Actions are stamped with that bot’s **latency profile** and ordered by `(ts_norm, enq_seq)` like everyone else.
-
----
-
-### Runtime model & sandboxing
-
-| Aspect | Decision |
-| --- | --- |
-| Execution model | **Step-per-tick**: `on_tick(T, inputs) -> actions[]` |
-| Default language | **Rust** SDK (native), plus **WASM** plug-ins for extensibility |
-| Optional scripting | **Python** workers behind a deterministic RPC shim (no network, seeded RNG) |
-| Isolation | WASM sandbox or subprocess; no file/network; memory cap; CPU time slice per tick |
-| Determinism | RNG seeded from `(session_id, symbol_id, bot_id)`; seeds logged in WAL |
-| Failure policy | Bot panic/timeout ⇒ drop actions for this tick, emit diagnostic; engine unaffected |
-
-**Quotas (per bot, per tick):**
-
-- **Time budget:** e.g., 100–500 µs wall per tick (configurable).
-- **Action budget:** max N submits + M cancels (admission limits still apply at the gateway).
-- **Outstanding orders:** per-symbol cap (defends against book bloat).
-
----
-
-### Data & policy boundaries
-
-- **No private state leaks:** bots cannot see other actors’ identities or hidden queues.
-- **No real-world P&L coupling:** external data is **advisory**, never drives prices directly.
-- **Self-match prevention:** enforced by Whistle; bots can’t opt out.
-- **Halt/limits:** if a symbol is paused or price-banded, bot actions are rejected like any other.
-
----
-
-### Bot lifecycle
-
-1. **Register** bot spec: `id`, `symbol(s)`, latency profile, quotas, seed.
-2. **Activate** at a tick boundary; StrategyEngine subscribes to required feeds.
-3. **Run step** each `T`: collect inputs → call bot → validate actions → forward to `OrderGateway`.
-4. **Deactivate/Evict** at boundary; outstanding orders cancelled by policy or left resting if configured.
-
----
-
-### Observability (off hot path)
-
-- Per-bot: step time p50/p95/p99, actions per tick, rejects by reason, hit rate (fills/submits), inventory/PNL (if enabled in analytics).
-- Per-symbol: bot market share, quote stability, spread contribution.
-- Audit: logged **seed**, version hash of bot binary/WASM, and profile.
-
----
-
-### Configuration (safe defaults)
-
-- `default_latency_profile = base_us=500, jitter=0`
-- `max_actions_per_tick = 64`, `max_outstanding = 256`
-- `cpu_budget_us = 200`, `mem_limit_mb = 64`
-- `rng_mode = deterministic(seed = H(session_id, symbol_id, bot_id))`
-- `allow_python = false` (opt-in); default **WASM** or Rust.
-
----
-
-### Interfaces (summary)
-
-**Bot SDK (conceptual):**
-
-- `fn init(ctx: InitCtx) -> BotState`
-- `fn on_tick(state: &mut BotState, view: MarketView<'_>) -> SmallVec<Action>`
-- `fn on_lifecycle(state, ev: LifecycleEvent)` (optional)
-
-**StrategyEngine → OrderGateway:**
-
-Same `InboundMsg` types as human flow; stamped with bot actor id and latency profile before SPSC enqueue.
-
----
-
-### Determinism & replay
-
-- Given the same **inputs, seed, config, and tick schedule**, bot outputs are **byte-identical**.
-- Bot versions are content-addressed; the exact artifact hash is stored in WAL/session metadata.
-- Any non-deterministic feature (e.g., jitter) is **disallowed** in replay mode.
+**Data Types:**
+- Player rosters and team assignments
+- Injury reports and status updates
+- Fantasy projections and rankings
+- Performance statistics and trends
 
 ---
 
@@ -1050,7 +1052,7 @@ Each active symbol (`Whistle` instance) maintains its own **lock-free, single-pr
 		                     │
 		       ┌─────────────┼──────────────┐
 		       ▼             ▼              ▼
-		  [Whistle]     [LatencyModel]   [StrategyEngine]
+		  [Whistle]     [OrderGateway]   [StrategyEngine]
 		(order matching)   (timestamp adj)   (bot logic)
 		                     ▼
 		            ┌────────────────┐
@@ -1087,7 +1089,7 @@ Each component contributes to ensuring orderly, fair, and stable simulated marke
 | Order Rate Throttling | `OrderGateway` | Token-bucket per trader to limit flood risk |
 | Minimum Tick Size | `OrderGateway` | Ensures discrete, clean pricing per asset class |
 | Circuit Breakers | `SymbolCoordinator` | Pauses symbols with extreme price velocity |
-| Fair Queue Handling | `LatencyModel`, `SimulationClock` | Normalized timestamps and configurable delay logic |
+| Fair Queue Handling | `OrderGateway`, `SimulationClock` | Normalized timestamps and configurable delay logic |
 | Exposure Tracking | `AccountService` | Per-user caps by symbol or total net exposure |
 | Quote Lifespan Rules | `Whistle` | Optional time-in-force enforcement or cancel delay penalties |
 
@@ -1135,7 +1137,7 @@ Critical violations that break system invariants and must be prevented during im
 
 **Price-time fairness** — Priority key = `(ts_norm, enq_seq)`. Partial fills retain original priority. Self-match prevention skips same-account orders.
 
-**Cold-start rules** — MARKET/IOC rejected until first trade establishes reference price. Only in-band LIMIT orders accepted.
+**Cold-start rules** — *Not currently implemented.* MARKET/IOC orders are accepted without reference price validation.
 
 **Sequence numbering** — `seq_in_tick` increments for each Trade and OrderLifecycle event, starting at 0 each tick. No gaps allowed.
 
@@ -1147,16 +1149,50 @@ Use compile-time checks, debug assertions, and property tests to catch violation
 
 ---
 
-## 18. Project Goals
+## 18. Database Architecture
+
+The Waiver Exchange uses **PostgreSQL** as its primary database, providing ACID compliance, strong consistency, and excellent performance for financial data.
+
+### Core Tables
+
+| **Table** | **Purpose** | **Key Fields** |
+| --- | --- | --- |
+| `accounts` | User account information and balances | `id`, `google_id`, `currency_balance`, `realized_pnl` |
+| `positions` | User holdings per symbol | `account_id`, `symbol_id`, `quantity`, `avg_cost`, `realized_pnl` |
+| `trades` | Historical trade records | `account_id`, `symbol_id`, `side`, `quantity`, `price`, `timestamp` |
+| `reservations` | Active order reservations | `account_id`, `amount`, `order_id`, `created_at` |
+| `price_history` | Historical price data for charts | `symbol_id`, `timestamp`, `open`, `high`, `low`, `close`, `volume` |
+| `equity_timeseries` | Real-time equity tracking | `account_id`, `tick`, `total_equity`, `cash_balance`, `position_value` |
+
+### Data Consistency
+
+- **ACID Transactions**: All trade settlements are atomic
+- **Foreign Key Constraints**: Maintain referential integrity
+- **Unique Constraints**: Prevent duplicate orders and trades
+- **Indexes**: Optimized for common query patterns
+
+### Performance Characteristics
+
+- **Connection Pooling**: Efficient database connection management
+- **Async Operations**: Non-blocking database operations
+- **Batch Inserts**: Optimized for high-throughput scenarios
+- **Query Optimization**: Indexed lookups for fast access
+
+---
+
+## 19. Project Goals
 
 | **Category** | **Goal** |
 | --- | --- |
 | Performance | < 2 μs match latency per order |
 | Determinism | Every run with same inputs = same output |
 | Throughput | 100k + orders/sec simulated across symbols |
-| Extensibility | Easy to add new symbols, players, or bots |
+| Extensibility | Easy to add new symbols, players, or features |
 | Observability | Fully loggable + visualizable with zero overhead |
 | Testability | Unit tests, property-based tests, replay integration |
 | Modularity | Clean, typed interfaces; one responsibility per component |
 | Concurrency | Lock-free buffers + safe, isolated execution per engine |
 | Scalability | Dynamic symbol activation and memory-efficient engine management |
+| Real-time Updates | < 100ms equity updates from trade to frontend |
+| Data Integrity | ACID compliance with PostgreSQL |
+| WebSocket Performance | Sub-second order placement and market data updates |
