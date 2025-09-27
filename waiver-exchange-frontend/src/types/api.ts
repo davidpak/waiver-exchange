@@ -36,9 +36,12 @@ export interface AccountSummaryResponse {
   account_id: number;
   balance: number;             // In cents
   total_equity: number;        // In cents
+  position_value: number;      // In cents
   day_change: number;          // In cents
   day_change_percent: number;  // Percentage
   buying_power: number;        // In cents
+  unrealized_pnl: number;      // In cents
+  realized_pnl: number;        // In cents
   last_updated: string;
 }
 
@@ -53,6 +56,8 @@ export interface EquitySnapshot {
   total_equity: number;        // In cents
   cash_balance: number;        // In cents
   position_value: number;      // In cents
+  unrealized_pnl: number;      // In cents
+  realized_pnl: number;        // In cents
   day_change: number;          // In cents
   day_change_percent: number;  // Percentage
 }

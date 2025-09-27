@@ -4,23 +4,34 @@ import { apiClient } from '@/lib/api-client';
 import { useAuthStore } from '@/stores/authStore';
 import type { AccountSummaryResponse } from '@/types/api';
 import {
-    Alert,
-    Card,
-    Group,
-    Skeleton,
-    Stack,
-    Text,
-    ThemeIcon,
+  Alert,
+  Card,
+  Group,
+  ScrollArea,
+  Skeleton,
+  Stack,
+  Text,
+  ThemeIcon,
+  Tooltip,
 } from '@mantine/core';
 import {
-    IconAlertCircle,
-    IconChartLine,
-    IconTrendingDown,
-    IconTrendingUp,
-    IconWallet,
+  IconAlertCircle,
+  IconChartLine,
+  IconCurrencyDollar,
+  IconInfoCircle,
+  IconMoneybag,
+  IconTrendingDown,
+  IconTrendingUp
 } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import React from 'react';
+import { EquityChart } from './EquityChart';
+
+// Design system colors - now using CSS variables
+const COLORS = {
+  profit: 'var(--profit-color)',
+  loss: 'var(--loss-color)',
+} as const;
 
 interface AccountSummaryProps {
   accountId?: number;
@@ -73,6 +84,18 @@ export function AccountSummary({ accountId, className, style }: AccountSummaryPr
     return IconChartLine;
   };
 
+  const formatPnL = (value: number | undefined) => {
+    if (value === undefined) return 'N/A';
+    const formatted = formatCurrency(Math.abs(value));
+    const prefix = value >= 0 ? '+' : '-';
+    return `${prefix}${formatted}`;
+  };
+
+  const getPnLColor = (value: number | undefined) => {
+    if (value === undefined || value === 0) return 'dimmed';
+    return value > 0 ? COLORS.profit : COLORS.loss;
+  };
+
   // Loading state
   if (summaryLoading) {
     return (
@@ -121,72 +144,164 @@ export function AccountSummary({ accountId, className, style }: AccountSummaryPr
   return (
     <Card
       className={className}
-      style={style}
+      style={{
+        ...style,
+        height: '350px', // Fixed height
+        display: 'flex',
+        flexDirection: 'column',
+        backgroundColor: 'var(--card-bg)',
+        border: '1px solid var(--border-primary)',
+      }}
       padding="lg"
       radius="md"
       withBorder
     >
-      <Stack gap="xs">
-        {/* Header */}
-        <Text size="lg" c="white">
-          Account Summary
-        </Text>
-
-        {/* Total Equity - BIGGEST TEXT */}
-        <Stack gap={2}>
-          <Text size="2xl" fw={800} c="white">
+      <Stack gap="xs" style={{ height: '100%' }}>
+        {/* Header Section */}
+        <Stack gap={1} align="stretch">
+          <Text size="lg" style={{ color: 'var(--text-primary)' }}>
+            Account Summary
+          </Text>
+          <Text size="xl" style={{ color: 'var(--text-primary)' }}>
             {formatCurrency(summaryData.total_equity)}
           </Text>
-          <Group gap="xs" align="center">
-            <DayChangeIcon
-              size={16}
-              color={getDayChangeColor(summaryData.day_change)}
-            />
-            <Text
-              size="sm"
-              c={getDayChangeColor(summaryData.day_change)}
-              fw={600}
-            >
-              {formatCurrency(summaryData.day_change)} ({formatPercentage(summaryData.day_change_percent)}) Today
-            </Text>
-          </Group>
+          <DayChangeIcon
+            size={3}
+            color={getDayChangeColor(summaryData.day_change)}
+          />
+          <Text size="sm" c={getDayChangeColor(summaryData.day_change)}>
+            {formatCurrency(summaryData.day_change)} (
+            {formatPercentage(summaryData.day_change_percent)}) Today
+          </Text>
         </Stack>
+        
 
-        {/* Account Details */}
-        <Stack gap="xs">
-          <Group justify="space-between">
-            <Group gap="xs">
-              <ThemeIcon size="sm" color="blue" variant="light">
-                <IconWallet size={12} />
-              </ThemeIcon>
-              <Text size="sm" c="dimmed">
-                Cash Balance
+        {/* Scrollable Content Area */}
+        <ScrollArea 
+          style={{ flex: 1 }}
+          type="auto"
+          offsetScrollbars="y"
+        >
+          <Stack gap="md" pr="xs">
+            {/* Equity Chart */}
+            <Stack gap="xs">
+              <EquityChart accountId={currentAccountId} />
+            </Stack>
+
+            {/* Profit & Loss Section */}
+            <Stack gap="xs">
+              <Group gap="xs" align="center">
+                <Text size="sm" fw={500} style={{ letterSpacing: '0.5px', color: 'var(--text-primary)' }}>
+                  Profit & Loss
+                </Text>
+                <Tooltip
+                  label={
+                    <div>
+                      <div><strong>Unrealized P&L:</strong> Profit/loss on open positions</div>
+                      <div><strong>Realized P&L:</strong> Profit/loss from completed trades</div>
+                    </div>
+                  }
+                  multiline
+                  withArrow
+                >
+                  <ThemeIcon size="xs" color="dimmed" variant="subtle">
+                    <IconInfoCircle size={10} />
+                  </ThemeIcon>
+                </Tooltip>
+              </Group>
+              <Stack gap="xs">
+                <Group justify="space-between">
+                  <Group gap="xs">
+                    <ThemeIcon size="sm" color="green" variant="light">
+                      <IconTrendingUp size={12} />
+                    </ThemeIcon>
+                    <Text size="sm" c="dimmed">
+                      Unrealized P&L
+                    </Text>
+                  </Group>
+                  <Text 
+                    size="sm" 
+                    c={getPnLColor(summaryData.unrealized_pnl)}
+                    fw={500}
+                  >
+                    {formatPnL(summaryData.unrealized_pnl)}
+                  </Text>
+                </Group>
+
+                <Group justify="space-between">
+                  <Group gap="xs">
+                    <ThemeIcon size="sm" color="blue" variant="light">
+                      <IconChartLine size={12} />
+                    </ThemeIcon>
+                    <Text size="sm" c="dimmed">
+                      Realized P&L
+                    </Text>
+                  </Group>
+                  <Text 
+                    size="sm" 
+                    c={getPnLColor(summaryData.realized_pnl)}
+                    fw={500}
+                  >
+                    {formatPnL(summaryData.realized_pnl)}
+                  </Text>
+                </Group>
+              </Stack>
+            </Stack>
+
+            {/* Account Overview Section */}
+            <Stack gap="xs">
+              <Text size="sm" fw={500}>
+                Account Overview
               </Text>
-            </Group>
-            <Text size="sm">
-              {formatCurrency(summaryData.balance)}
-            </Text>
-          </Group>
+              <Stack gap="xs">
+                <Group justify="space-between">
+                  <Group gap="xs">
+                    <ThemeIcon size="sm" color="green" variant="light">
+                      <IconCurrencyDollar size={12} />
+                    </ThemeIcon>
+                    <Text size="sm" c="dimmed">
+                      Cash Balance
+                    </Text>
+                  </Group>
+                  <Text size="sm" fw={500}>
+                    {formatCurrency(summaryData.balance)}
+                  </Text>
+                </Group>
 
-          <Group justify="space-between">
-            <Group gap="xs">
-              <ThemeIcon size="sm" color="green" variant="light">
-                <IconChartLine size={12} />
-              </ThemeIcon>
-              <Text size="sm" c="dimmed">
-                Buying Power
-              </Text>
-            </Group>
-            <Text size="sm">
-              {formatCurrency(summaryData.buying_power)}
-            </Text>
-          </Group>
-        </Stack>
+                <Group justify="space-between">
+                  <Group gap="xs">
+                    <ThemeIcon size="sm" color="blue" variant="light">
+                      <IconChartLine size={12} />
+                    </ThemeIcon>
+                    <Text size="sm" c="dimmed">
+                      Position Value
+                    </Text>
+                  </Group>
+                  <Text size="sm" fw={500}>
+                    {formatCurrency(summaryData.position_value)}
+                  </Text>
+                </Group>
 
-        {/* Last Updated */}
-        <Text size="xs" c="dimmed" ta="center">
-          Last updated: {new Date(summaryData.last_updated).toLocaleTimeString()}
-        </Text>
+                <Group justify="space-between">
+                  <Group gap="xs">
+                    <ThemeIcon size="sm" color="green" variant="light">
+                      <IconMoneybag size={12} />
+                    </ThemeIcon>
+                    <Text size="sm" c="dimmed">
+                      Buying Power
+                    </Text>
+                  </Group>
+                  <Text size="sm" fw={500}>
+                    {formatCurrency(summaryData.buying_power)}
+                  </Text>
+                </Group>
+              </Stack>
+            </Stack>
+            <Text size="xs" c="dimmed" ta="center" style={{ marginTop: 'auto' }}>
+              Last updated: {new Date(summaryData.last_updated).toLocaleTimeString()}
+            </Text>
+          </Stack>
+        </ScrollArea>
       </Stack>
     </Card>
   );
