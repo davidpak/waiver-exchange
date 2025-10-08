@@ -65,13 +65,24 @@ async fn main() -> Result<()> {
         })
     };
 
+    // Start the MarketMaker in a separate task
+    info!("Starting MarketMaker...");
+    let market_maker_handle = {
+        let state = service_state.clone();
+        tokio::spawn(async move {
+            if let Err(e) = state.start_market_maker().await {
+                error!("MarketMaker failed: {}", e);
+            }
+        })
+    };
+
     // Wait for shutdown signal
     info!("Waiver Exchange Service is running. Press Ctrl+C to shutdown gracefully.");
     let _ = shutdown_signal.await;
 
     // Graceful shutdown
     info!("Shutdown signal received. Initiating graceful shutdown...");
-    graceful_shutdown(service_state, clock_handle, gateway_handle).await?;
+    graceful_shutdown(service_state, clock_handle, gateway_handle, market_maker_handle).await?;
 
     info!("Waiver Exchange Service shutdown complete");
     Ok(())

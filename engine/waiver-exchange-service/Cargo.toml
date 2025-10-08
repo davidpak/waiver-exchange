@@ -22,6 +22,7 @@ player-registry = { path = "../player-registry" }
 whistle = { path = "../whistle" }
 account-service = { path = "../account-service" }
 equity-service = { path = "../equity-service" }
+market-maker = { path = "../market-maker" }
 
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }

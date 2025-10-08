@@ -68,6 +68,7 @@ pub async fn graceful_shutdown(
     service_state: Arc<ServiceState>,
     clock_handle: tokio::task::JoinHandle<()>,
     gateway_handle: tokio::task::JoinHandle<()>,
+    market_maker_handle: tokio::task::JoinHandle<()>,
 ) -> Result<()> {
     info!("Starting graceful shutdown...");
 
@@ -105,6 +106,19 @@ pub async fn graceful_shutdown(
         }
         Err(_) => {
             warn!("OrderGateway did not stop within timeout, forcing shutdown");
+        }
+    }
+
+    // Wait for the market maker task to complete with timeout
+    match timeout(shutdown_timeout, market_maker_handle).await {
+        Ok(Ok(())) => {
+            info!("MarketMaker stopped gracefully");
+        }
+        Ok(Err(e)) => {
+            error!("MarketMaker task failed: {}", e);
+        }
+        Err(_) => {
+            warn!("MarketMaker did not stop within timeout, forcing shutdown");
         }
     }
 

@@ -280,13 +280,12 @@ impl SimulationClock {
             return Ok((0, 0));
         }
 
-        // Debug: Show which symbols are being processed (only when there are multiple symbols or first time)
-        if !symbol_ids.is_empty() && (symbol_count > 1 || tick % 1000 == 0) {
+        // Debug: Show which symbols are being processed (only every 10000 ticks to reduce noise)
+        if !symbol_ids.is_empty() && tick % 10000 == 0 {
             tracing::info!(
-                "SimulationClock processing {} symbols at tick {}: {:?}",
+                "SimulationClock processing {} symbols at tick {}",
                 symbol_count,
-                tick,
-                symbol_ids
+                tick
             );
         }
 
@@ -474,8 +473,11 @@ impl SimulationClock {
             let remaining = target_duration - elapsed;
             thread::sleep(remaining);
         } else {
-            // We're behind schedule
-            tracing::warn!("Tick processing took {:?}, target was {:?}", elapsed, target_duration);
+            // We're behind schedule - commented out all tick processing logs to reduce noise
+            // if elapsed > target_duration * 2 {
+            //     tracing::warn!("Tick processing took {:?}, target was {:?}", elapsed, target_duration);
+            // }
+            // tracing::debug!("Tick processing took {:?}, target was {:?}", elapsed, target_duration);
         }
 
         Ok(())

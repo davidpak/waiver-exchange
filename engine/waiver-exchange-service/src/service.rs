@@ -9,6 +9,7 @@ use crate::config::ServiceConfig;
 use account_service::{AccountService, AccountServiceConfig};
 use equity_service::{EquityValuationService, EquityServiceConfig};
 use execution_manager::ExecutionManager;
+use market_maker::{MarketMakerService, MarketMakerConfig};
 use order_gateway::{GatewayConfig, OrderGateway};
 use order_router::OrderRouter;
 use persistence::PersistenceBackend;
@@ -47,6 +48,9 @@ pub struct ServiceState {
 
     /// PlayerRegistry instance
     pub player_registry: Arc<RwLock<Option<PlayerRegistry>>>,
+
+    /// MarketMakerService instance
+    pub market_maker: Arc<RwLock<Option<MarketMakerService>>>,
 
     /// Service running state
     pub is_running: Arc<RwLock<bool>>,
@@ -169,6 +173,7 @@ impl ServiceState {
             account_service: account_svc,
             equity_service: equity_svc,
             player_registry: Arc::new(RwLock::new(None)), // PlayerRegistry is now owned by OrderGateway
+            market_maker: Arc::new(RwLock::new(None)), // MarketMaker will be initialized later
             is_running: Arc::new(RwLock::new(false)),
         };
 
@@ -356,6 +361,30 @@ impl ServiceState {
         // For now, the gateway will stop when the service shuts down
 
         info!("OrderGateway stop signal sent");
+        Ok(())
+    }
+
+    /// Start the MarketMaker service
+    pub async fn start_market_maker(&self) -> Result<()> {
+        info!("Starting MarketMaker service...");
+
+        // Create MarketMaker configuration from environment
+        let market_maker_config = MarketMakerConfig::from_env()
+            .context("Failed to load MarketMaker configuration")?;
+
+        // Create the MarketMaker service
+        let mut market_maker_service = MarketMakerService::new(market_maker_config)
+            .await
+            .context("Failed to create MarketMaker service")?;
+
+        // Start the market maker in a separate task
+        tokio::spawn(async move {
+            if let Err(e) = market_maker_service.start().await {
+                error!("MarketMaker failed: {}", e);
+            }
+        });
+
+        info!("MarketMaker service started successfully");
         Ok(())
     }
 
