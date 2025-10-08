@@ -1,15 +1,16 @@
 // API Client for Waiver Exchange Trading Platform
 import type {
-    AccountSummaryResponse,
-    AuthResponse,
-    EquityHistoryResponse,
-    OrderPlaceRequest,
-    OrderPlaceResponse,
-    PriceHistoryResponse,
-    SnapshotResponse,
-    SymbolInfoResponse,
-    Timeframe,
-    WebSocketMessage
+  AccountSummaryResponse,
+  AuthResponse,
+  CurrentPriceResponse,
+  EquityHistoryResponse,
+  OrderPlaceRequest,
+  OrderPlaceResponse,
+  PriceHistoryResponse,
+  SnapshotResponse,
+  SymbolInfoResponse,
+  Timeframe,
+  WebSocketMessage
 } from '@/types/api';
 import { API_CONFIG } from '@/types/api';
 
@@ -52,6 +53,16 @@ class RestApiClient {
   // Symbol Information
   async getSymbolInfo(symbolId: number): Promise<SymbolInfoResponse> {
     return this.request<SymbolInfoResponse>(`/symbol/${symbolId}/info`);
+  }
+
+  // Get all players for search functionality
+  async getAllPlayers(): Promise<SymbolInfoResponse[]> {
+    return this.request<SymbolInfoResponse[]>('/symbols/all');
+  }
+
+  // Get current price for a symbol
+  async getCurrentPrice(symbolId: number): Promise<CurrentPriceResponse> {
+    return this.request<CurrentPriceResponse>(`/symbol/${symbolId}/price`);
   }
 
   // Price History

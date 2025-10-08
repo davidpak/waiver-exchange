@@ -15,6 +15,13 @@ export interface SymbolInfoResponse {
   last_updated: string;
 }
 
+export interface CurrentPriceResponse {
+  symbol_id: number;
+  price: number;
+  source: string;
+  last_updated: string;
+}
+
 export interface PriceHistoryResponse {
   symbol_id: number;
   period: string;

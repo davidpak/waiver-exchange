@@ -7,7 +7,6 @@ import {
   Alert,
   Card,
   Group,
-  ScrollArea,
   Skeleton,
   Stack,
   Text,
@@ -146,7 +145,7 @@ export function AccountSummary({ accountId, className, style }: AccountSummaryPr
       className={className}
       style={{
         ...style,
-        height: '350px', // Fixed height
+        minHeight: '100%', // Allow expansion beyond container height
         display: 'flex',
         flexDirection: 'column',
         backgroundColor: 'var(--card-bg)',
@@ -156,7 +155,7 @@ export function AccountSummary({ accountId, className, style }: AccountSummaryPr
       radius="md"
       withBorder
     >
-      <Stack gap="xs" style={{ height: '100%' }}>
+      <Stack gap="xs" style={{ minHeight: '100%' }}>
         {/* Header Section */}
         <Stack gap={1} align="stretch">
           <Text size="lg" style={{ color: 'var(--text-primary)' }}>
@@ -176,13 +175,8 @@ export function AccountSummary({ accountId, className, style }: AccountSummaryPr
         </Stack>
         
 
-        {/* Scrollable Content Area */}
-        <ScrollArea 
-          style={{ flex: 1 }}
-          type="auto"
-          offsetScrollbars="y"
-        >
-          <Stack gap="md" pr="xs">
+        {/* Content Area - No internal scrolling */}
+        <Stack gap="md" style={{ flex: 1 }}>
             {/* Equity Chart */}
             <Stack gap="xs">
               <EquityChart accountId={currentAccountId} />
@@ -300,8 +294,7 @@ export function AccountSummary({ accountId, className, style }: AccountSummaryPr
             <Text size="xs" c="dimmed" ta="center" style={{ marginTop: 'auto' }}>
               Last updated: {new Date(summaryData.last_updated).toLocaleTimeString()}
             </Text>
-          </Stack>
-        </ScrollArea>
+        </Stack>
       </Stack>
     </Card>
   );
