@@ -24,6 +24,7 @@ impl warp::reject::Reject for NotFoundError {}
 /// Symbol information response
 #[derive(Serialize, Deserialize)]
 pub struct SymbolInfoResponse {
+    pub symbol_id: u32,
     pub name: String,
     pub position: String,
     pub team: String,
@@ -182,6 +183,7 @@ pub async fn get_symbol_info(
     match registry.get_by_symbol_id(symbol_id) {
         Ok(player) => {
             let response = SymbolInfoResponse {
+                symbol_id: symbol_id,
                 name: player.name.clone(),
                 position: player.position.clone(),
                 team: player.team.clone(),
@@ -210,6 +212,130 @@ pub async fn get_symbol_info(
             Err(warp::reject::custom(NotFoundError(error)))
         }
     }
+}
+
+/// Get all players for search functionality
+pub async fn get_all_players(
+    registry: Arc<PlayerRegistry>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    let players: Vec<SymbolInfoResponse> = registry
+        .get_all_symbols()
+        .iter()
+        .map(|symbol| SymbolInfoResponse {
+            symbol_id: symbol.symbol_id,
+            name: symbol.name.clone(),
+            position: symbol.position.clone(),
+            team: symbol.team.clone(),
+            projected_points: symbol.projected_points,
+            last_updated: chrono::Utc::now().to_rfc3339(),
+        })
+        .collect();
+
+    Ok(warp::reply::json(&players))
+}
+
+/// Current price response
+#[derive(Serialize, Deserialize)]
+pub struct CurrentPriceResponse {
+    pub symbol_id: u32,
+    pub price: u64,
+    pub source: String,
+    pub last_updated: String,
+}
+
+/// Get current price for a symbol (checks multiple sources)
+pub async fn get_current_price(
+    symbol_id: u32,
+    db_pool: Arc<PgPool>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    // Try to get price from multiple sources in order of preference
+    
+    // 1. Try to get from fair prices (RPE engine)
+    if let Ok(Some(fair_price)) = get_fair_price_for_symbol(symbol_id, &db_pool).await {
+        let response = CurrentPriceResponse {
+            symbol_id,
+            price: fair_price.fair_cents as u64,
+            source: "fair_price".to_string(),
+            last_updated: fair_price.updated_at.to_rfc3339(),
+        };
+        return Ok(warp::reply::json(&response));
+    }
+    
+    // 2. Try to get from price history
+    if let Ok(Some(price)) = get_latest_price_from_history(symbol_id, &db_pool).await {
+        let response = CurrentPriceResponse {
+            symbol_id,
+            price: price as u64,
+            source: "price_history".to_string(),
+            last_updated: chrono::Utc::now().to_rfc3339(),
+        };
+        return Ok(warp::reply::json(&response));
+    }
+    
+    // 3. Fallback to default price
+    let response = CurrentPriceResponse {
+        symbol_id,
+        price: 1000, // $10.00 default
+        source: "default".to_string(),
+        last_updated: chrono::Utc::now().to_rfc3339(),
+    };
+    
+    Ok(warp::reply::json(&response))
+}
+
+/// Get fair price for a symbol from RPE engine
+async fn get_fair_price_for_symbol(symbol_id: u32, db_pool: &PgPool) -> Result<Option<FairPriceData>, sqlx::Error> {
+    // First, get the player_id for this symbol_id
+    let player_id_row = sqlx::query!(
+        "SELECT sportsdataio_player_id FROM player_id_mapping WHERE our_symbol_id = $1",
+        symbol_id as i32
+    )
+    .fetch_optional(db_pool)
+    .await?;
+    
+    let player_id = match player_id_row {
+        Some(row) => row.sportsdataio_player_id,
+        None => return Ok(None),
+    };
+    
+    // Get the fair price
+    let fair_price_row = sqlx::query!(
+        "SELECT fair_cents, source, confidence_score, ts FROM rpe_fair_prices WHERE player_id = $1 ORDER BY ts DESC LIMIT 1",
+        player_id
+    )
+    .fetch_optional(db_pool)
+    .await?;
+    
+    match fair_price_row {
+        Some(row) => Ok(Some(FairPriceData {
+            fair_cents: row.fair_cents,
+            source: row.source.unwrap_or_else(|| "unknown".to_string()),
+            confidence_score: row.confidence_score.unwrap_or_default().to_f64().unwrap_or(0.0),
+            updated_at: row.ts,
+        })),
+        None => Ok(None),
+    }
+}
+
+/// Get latest price from price history
+async fn get_latest_price_from_history(symbol_id: u32, db_pool: &PgPool) -> Result<Option<i64>, sqlx::Error> {
+    let row = sqlx::query!(
+        "SELECT close_price FROM price_history WHERE symbol_id = $1 ORDER BY timestamp DESC LIMIT 1",
+        symbol_id as i32
+    )
+    .fetch_optional(db_pool)
+    .await?;
+    
+    Ok(row.map(|r| r.close_price))
+}
+
+/// Fair price data structure
+#[derive(Debug)]
+struct FairPriceData {
+    fair_cents: i64,
+    source: String,
+    confidence_score: f64,
+    updated_at: chrono::DateTime<chrono::Utc>,
 }
 
 /// Get price history for a symbol
@@ -373,7 +499,7 @@ async fn calculate_total_equity(db_pool: &PgPool, account_id: i64, cash_balance:
                 if quantity != 0 {
                     // Process both long and short positions
                     // Get current price for this symbol
-                    let current_price = get_current_price(db_pool, position.symbol_id as i32).await;
+                    let current_price = get_current_price_legacy(db_pool, position.symbol_id as i32).await;
                     let position_value = quantity * current_price as i64;
                     total_position_value += position_value;
                 }
@@ -394,8 +520,8 @@ async fn calculate_total_equity(db_pool: &PgPool, account_id: i64, cash_balance:
     }
 }
 
-/// Get current price for a symbol (from price_history table)
-async fn get_current_price(db_pool: &PgPool, symbol_id: i32) -> u64 {
+/// Get current price for a symbol (from price_history table) - legacy function
+async fn get_current_price_legacy(db_pool: &PgPool, symbol_id: i32) -> u64 {
     match sqlx::query!(
         "SELECT close_price FROM price_history WHERE symbol_id = $1 ORDER BY timestamp DESC LIMIT 1",
         symbol_id
@@ -742,6 +868,27 @@ pub fn create_routes(
             },
         );
 
+    // All players endpoint for search
+    let all_players = warp::path("api")
+        .and(warp::path("symbols"))
+        .and(warp::path("all"))
+        .and(warp::get())
+        .and(registry_filter.clone())
+        .and_then(|registry: Arc<PlayerRegistry>| async move {
+            get_all_players(registry).await
+        });
+
+    // Current price endpoint
+    let current_price = warp::path("api")
+        .and(warp::path("symbol"))
+        .and(warp::path::param::<u32>())
+        .and(warp::path("price"))
+        .and(warp::get())
+        .and(db_pool_filter.clone())
+        .and_then(|symbol_id: u32, db_pool: Arc<PgPool>| async move {
+            get_current_price(symbol_id, db_pool).await
+        });
+
     // Price history endpoint
     let price_history = warp::path("api")
         .and(warp::path("price-history"))
@@ -813,6 +960,8 @@ pub fn create_routes(
 
     // Combine all routes
     symbol_info
+        .or(all_players)
+        .or(current_price)
         .or(price_history)
         .or(account_summary)
         .or(equity_history)

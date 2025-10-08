@@ -98,6 +98,36 @@ impl ApiKeyStore {
             },
         );
 
+        // Add API key for account 7 (used in EVS integration tests)
+        keys.insert(
+            "ak_test_7_abcdef1234567890".to_string(),
+            UserInfo {
+                user_id: "user7".to_string(),
+                api_secret: "sk_test_7_1234567890abcdef".to_string(),
+                permissions: vec!["trade".to_string(), "market_data".to_string()],
+                rate_limits: RateLimits {
+                    orders_per_second: 100,
+                    market_data_per_second: 1000,
+                    burst_limit: 10,
+                },
+            },
+        );
+
+        // Add API key for market maker bot (house account)
+        keys.insert(
+            "ak_market_maker_1234567890abcdef".to_string(),
+            UserInfo {
+                user_id: "market_maker_bot".to_string(),
+                api_secret: "sk_market_maker_abcdef1234567890".to_string(),
+                permissions: vec!["trade".to_string(), "market_data".to_string()],
+                rate_limits: RateLimits {
+                    orders_per_second: 1000, // High rate limit for market making
+                    market_data_per_second: 10000,
+                    burst_limit: 100,
+                },
+            },
+        );
+
         Self { keys }
     }
 

@@ -222,3 +222,37 @@ impl UserSession {
         self.permissions.contains(&permission.to_string())
     }
 }
+
+/// Equity update message
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EquityUpdate {
+    /// Account ID
+    pub account_id: i64,
+    
+    /// Total equity in cents
+    pub total_equity: i64,
+    
+    /// Cash balance in cents
+    pub cash_balance: i64,
+    
+    /// Position value in cents
+    pub position_value: i64,
+    
+    /// Unrealized P&L in cents
+    pub unrealized_pnl: i64,
+    
+    /// Realized P&L in cents
+    pub realized_pnl: i64,
+    
+    /// Day change in cents
+    pub day_change: i64,
+    
+    /// Day change percentage
+    pub day_change_percent: f64,
+    
+    /// Current tick
+    pub tick: u64,
+    
+    /// Timestamp
+    pub timestamp: u64,
+}

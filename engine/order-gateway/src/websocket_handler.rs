@@ -221,6 +221,7 @@ impl WebSocketHandler {
                 self.market_data_broadcaster
                     .add_client(session.user_id.clone(), sender.clone())
                     .await;
+                
             }
         }
 
@@ -258,6 +259,7 @@ impl WebSocketHandler {
                 self.market_data_broadcaster
                     .add_client(session.user_id.clone(), sender.clone())
                     .await;
+                
             }
         }
 

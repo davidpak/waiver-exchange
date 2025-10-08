@@ -106,4 +106,41 @@ impl MarketDataBroadcaster {
         let clients = self.clients.read().await;
         clients.len()
     }
+
+    /// Send equity update to a specific account
+    pub async fn send_equity_update(&self, account_id: i64, equity_update: crate::messages::EquityUpdate) -> Result<(), GatewayError> {
+        let clients = self.clients.read().await;
+        
+        // Find the client for this account (we need to map account_id to user_id)
+        // For now, we'll send to all clients - in production you'd want proper account-to-user mapping
+        if clients.is_empty() {
+            return Ok(());
+        }
+
+        // Create equity update message
+        let equity_msg = serde_json::json!({
+            "stream": "equity_update",
+            "data": equity_update
+        });
+
+        let message = Message::Text(serde_json::to_string(&equity_msg)?);
+
+        // Send to all clients (in production, filter by account_id)
+        let mut failed_clients = Vec::new();
+        for (user_id, sender) in clients.iter() {
+            if sender.send(message.clone()).is_err() {
+                failed_clients.push(user_id.clone());
+            }
+        }
+
+        // Remove failed clients
+        if !failed_clients.is_empty() {
+            let mut clients = self.clients.write().await;
+            for user_id in failed_clients {
+                clients.remove(&user_id);
+            }
+        }
+
+        Ok(())
+    }
 }
