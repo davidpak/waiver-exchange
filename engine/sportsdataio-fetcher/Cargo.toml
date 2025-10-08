@@ -1,0 +1,37 @@
+[package]
+name = "sportsdataio-fetcher"
+version = "0.1.0"
+edition = "2021"
+
+[[bin]]
+name = "test-fetcher"
+path = "src/bin/test_fetcher.rs"
+
+[[bin]]
+name = "populate-data"
+path = "src/bin/populate_data.rs"
+
+[[bin]]
+name = "debug-data"
+path = "src/bin/debug_data.rs"
+
+[[bin]]
+name = "clean-week-points"
+path = "src/bin/clean_week_points.rs"
+
+[[bin]]
+name = "fix-week-points-data"
+path = "src/bin/fix_week_points_data.rs"
+
+[dependencies]
+tokio = { version = "1.0", features = ["full", "sync"] }
+reqwest = { version = "0.11", features = ["json"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+sqlx = { version = "0.8", features = ["runtime-tokio-rustls", "postgres", "chrono", "uuid", "bigdecimal"] }
+chrono = { version = "0.4", features = ["serde"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+anyhow = "1.0"
+config = "0.14"
+bigdecimal = "0.4"
