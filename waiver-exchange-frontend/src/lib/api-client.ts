@@ -65,6 +65,11 @@ class RestApiClient {
     return this.request<CurrentPriceResponse>(`/symbol/${symbolId}/price`);
   }
 
+  // Get bulk prices for all symbols
+  async getAllPrices(): Promise<{ prices: Record<string, number>; last_updated: string }> {
+    return this.request<{ prices: Record<string, number>; last_updated: string }>('/symbols/prices');
+  }
+
   // Price History
   async getPriceHistory(
     symbolId: number,
