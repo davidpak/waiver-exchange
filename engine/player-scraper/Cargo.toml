@@ -16,3 +16,15 @@ tracing = "0.1"
 tracing-subscriber = "0.3"
 anyhow = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
+
+[[bin]]
+name = "scrape_players"
+path = "src/bin/scrape_players.rs"
+
+[[bin]]
+name = "scrape_weekly_stats"
+path = "src/bin/scrape_weekly_stats.rs"
+
+[[bin]]
+name = "scrape_all_weeks"
+path = "src/bin/scrape_all_weeks.rs"

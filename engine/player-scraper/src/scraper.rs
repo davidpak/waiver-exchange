@@ -1,10 +1,21 @@
 use anyhow::{Context, Result};
 use reqwest::Client;
 use scraper::{Html, Selector};
+use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tracing::{info, warn};
 
-use crate::types::{Player, PlayerData};
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NflLeaderboardPlayer {
+    pub player_id: u32,
+    pub name: String,
+    pub position: String,
+    pub team: String,
+    pub fantasy_points: f64,
+    pub rank: u32,
+}
+
+use crate::types::{Player, PlayerData, WeeklyPlayer, WeeklyPlayerData};
 
 /// NFL.com fantasy football player scraper
 pub struct NflPlayerScraper {
@@ -158,6 +169,200 @@ impl NflPlayerScraper {
         Ok(player_data)
     }
 
+    /// Scrape weekly player stats from NFL.com with pagination
+    pub async fn scrape_weekly_stats(&self, season: &str, week: u32) -> Result<WeeklyPlayerData> {
+        info!("Starting to scrape weekly stats for season {} week {}", season, week);
+
+        let mut all_players = Vec::new();
+        let mut offset = 1; // Start at 1, not 0
+        let page_size = 25;
+        let mut total_pages = 0;
+
+        loop {
+            // Use the URL for weekly stats with offset for pagination
+            let url = format!(
+                "https://fantasy.nfl.com/research/players?offset={}&position=O&sort=pts&statCategory=stats&statSeason={}&statType=weekStats&statWeek={}",
+                offset, season, week
+            );
+            info!("Fetching page {} (offset {}) from: {}", total_pages + 1, offset, url);
+
+            // Fetch the page
+            let response = self.client.get(&url).send().await.context("Failed to fetch NFL.com page")?;
+
+            if !response.status().is_success() {
+                anyhow::bail!("HTTP request failed with status: {}", response.status());
+            }
+
+            let html = response.text().await.context("Failed to read response body")?;
+            info!("Successfully fetched HTML ({} bytes)", html.len());
+
+            // Parse the HTML
+            let document = Html::parse_document(&html);
+            let page_players = self.parse_weekly_player_table(&document, week)?;
+
+            if page_players.is_empty() {
+                // No more players, we've reached the end
+                info!("No more players found, stopping pagination");
+                break;
+            }
+
+            info!("Parsed {} players from page {}", page_players.len(), total_pages + 1);
+            
+            // Show first 5 players from this page
+            if !page_players.is_empty() {
+                info!("   📊 First 5 players from page {}:", total_pages + 1);
+                for (i, player) in page_players.iter().take(5).enumerate() {
+                    info!("      {}. {} ({}) - {} - {:.1} pts vs {}", 
+                        i + 1, player.name, player.position, player.team, 
+                        player.fantasy_points, player.opponent);
+                }
+            }
+            
+            all_players.extend(page_players);
+            
+            total_pages += 1;
+            offset += page_size;
+
+            // Stop when we have enough players (around 450-500 for our symbols)
+            if all_players.len() >= 500 {
+                info!("Reached target player count ({}), stopping pagination", all_players.len());
+                break;
+            }
+
+            // Safety check to prevent infinite loops
+            if total_pages > 50 {
+                warn!("Reached maximum page limit (50), stopping pagination");
+                break;
+            }
+
+            // Small delay between requests to be respectful
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+        }
+
+        info!("Successfully parsed {} total players across {} pages for week {}", all_players.len(), total_pages, week);
+
+        let mut weekly_data = WeeklyPlayerData::new(season.to_string(), week);
+        weekly_data.players = all_players;
+        weekly_data.sort_by_points();
+
+        if !weekly_data.players.is_empty() {
+            info!(
+                "Created weekly data with {} players, top player: {} ({:.1} pts)",
+                weekly_data.players.len(),
+                weekly_data.players[0].name,
+                weekly_data.players[0].fantasy_points
+            );
+        }
+
+        Ok(weekly_data)
+    }
+
+    /// Parse the weekly player table from HTML
+    fn parse_weekly_player_table(&self, document: &Html, week: u32) -> Result<Vec<WeeklyPlayer>> {
+        let mut players = Vec::new();
+
+        // Selector for player rows - looking for rows with class starting with "player-"
+        let player_row_selector = Selector::parse("tr[class*=\"player-\"]")
+            .map_err(|e| anyhow::anyhow!("Failed to create player row selector: {}", e))?;
+
+        // Selector for player name cell (the first cell with class "playerNameAndInfo")
+        let name_selector = Selector::parse(".playerNameAndInfo")
+            .map_err(|e| anyhow::anyhow!("Failed to create name selector: {}", e))?;
+
+        // Selector for opponent (second column)
+        let opponent_selector = Selector::parse(".playerOpponent")
+            .map_err(|e| anyhow::anyhow!("Failed to create opponent selector: {}", e))?;
+
+        // Selector for weekly fantasy points (last column with class "statTotal")
+        let points_selector = Selector::parse(".statTotal")
+            .map_err(|e| anyhow::anyhow!("Failed to create points selector: {}", e))?;
+
+        for (row_index, row) in document.select(&player_row_selector).enumerate() {
+            if row_index >= 1000 {
+                // Limit to top 1000 players
+                break;
+            }
+
+            match self.parse_weekly_player_row(&row, &name_selector, &opponent_selector, &points_selector, week) {
+                Ok(Some(player)) => {
+                    players.push(player);
+                }
+                Ok(None) => {
+                    // Skip this row (no valid data)
+                    continue;
+                }
+                Err(e) => {
+                    warn!("Failed to parse weekly player row {}: {}", row_index, e);
+                    continue;
+                }
+            }
+        }
+
+        Ok(players)
+    }
+
+    /// Parse a single weekly player row
+    fn parse_weekly_player_row(
+        &self,
+        row: &scraper::ElementRef,
+        name_selector: &Selector,
+        opponent_selector: &Selector,
+        points_selector: &Selector,
+        week: u32,
+    ) -> Result<Option<WeeklyPlayer>> {
+        // Extract player ID from the row's class attribute
+        let player_id = self.extract_player_id(row)?;
+
+        // Extract player name and basic info
+        let (name, position, team) = self.extract_player_info(row, name_selector)?;
+
+        // Extract opponent
+        let opponent = self.extract_opponent(row, opponent_selector)?;
+
+        // Extract weekly fantasy points
+        let fantasy_points = self.extract_weekly_points(row, points_selector)?;
+
+        // Skip if we don't have valid data
+        if name.is_empty() || fantasy_points < 0.0 {
+            return Ok(None);
+        }
+
+        Ok(Some(WeeklyPlayer {
+            player_id,
+            name,
+            position,
+            team,
+            week,
+            fantasy_points,
+            opponent,
+            rank: None, // Will be assigned after sorting
+        }))
+    }
+
+    /// Extract opponent team from the opponent cell
+    fn extract_opponent(&self, row: &scraper::ElementRef, opponent_selector: &Selector) -> Result<String> {
+        let opponent_cell = row.select(opponent_selector).next()
+            .context("Could not find opponent cell")?;
+        
+        let opponent_text = opponent_cell.text().collect::<String>().trim().to_string();
+        Ok(opponent_text)
+    }
+
+    /// Extract weekly fantasy points from the points cell
+    fn extract_weekly_points(&self, row: &scraper::ElementRef, points_selector: &Selector) -> Result<f64> {
+        let points_cell = row.select(points_selector).next()
+            .context("Could not find points cell")?;
+        
+        let points_text = points_cell.text().collect::<String>().trim().to_string();
+        
+        if points_text.is_empty() || points_text == "-" {
+            return Ok(0.0);
+        }
+        
+        points_text.parse::<f64>()
+            .map_err(|e| anyhow::anyhow!("Failed to parse fantasy points '{}': {}", points_text, e))
+    }
+
     /// Parse the player table from HTML
     fn parse_player_table(&self, document: &Html) -> Result<Vec<Player>> {
         let mut players = Vec::new();
@@ -303,6 +508,90 @@ impl NflPlayerScraper {
         points_text
             .parse::<f64>()
             .with_context(|| format!("Failed to parse projected points: '{points_text}'"))
+    }
+
+    /// Scrape NFL Fantasy leaderboard page
+    pub async fn scrape_nfl_leaderboard_page(&self, url: &str) -> Result<Vec<NflLeaderboardPlayer>, Box<dyn std::error::Error>> {
+        let response = self.client.get(url)
+            .header("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(format!("HTTP error: {}", response.status()).into());
+        }
+
+        let html = response.text().await?;
+        let document = scraper::Html::parse_document(&html);
+        
+        // Selector for player rows
+        let player_selector = scraper::Selector::parse("tr[class*=\"player-\"]").unwrap();
+        let name_selector = scraper::Selector::parse("a.playerName").unwrap();
+        let position_selector = scraper::Selector::parse("em").unwrap();
+        let points_selector = scraper::Selector::parse("span.playerSeasonTotal").unwrap();
+        
+        let mut players = Vec::new();
+        
+        for row in document.select(&player_selector) {
+            // Extract player ID from class name
+            let class_attr = row.value().attr("class").unwrap_or("");
+            let player_id = if let Some(start) = class_attr.find("player-") {
+                let id_part = &class_attr[start + 7..];
+                if let Some(end) = id_part.find(' ') {
+                    id_part[..end].parse::<u32>().unwrap_or(0)
+                } else {
+                    id_part.parse::<u32>().unwrap_or(0)
+                }
+            } else {
+                continue;
+            };
+            
+            // Extract player name
+            let name = row.select(&name_selector)
+                .next()
+                .map(|e| e.text().collect::<String>().trim().to_string())
+                .unwrap_or_default();
+            
+            if name.is_empty() {
+                continue;
+            }
+            
+            // Extract position and team
+            let position_text = row.select(&position_selector)
+                .next()
+                .map(|e| e.text().collect::<String>())
+                .unwrap_or_default();
+            
+            let (position, team) = if position_text.contains(" - ") {
+                let parts: Vec<&str> = position_text.split(" - ").collect();
+                if parts.len() >= 2 {
+                    (parts[0].trim().to_string(), parts[1].trim().to_string())
+                } else {
+                    (position_text.clone(), "".to_string())
+                }
+            } else {
+                (position_text, "".to_string())
+            };
+            
+            // Extract fantasy points
+            let points_text = row.select(&points_selector)
+                .next()
+                .map(|e| e.text().collect::<String>())
+                .unwrap_or_default();
+            
+            let fantasy_points = points_text.parse::<f64>().unwrap_or(0.0);
+            
+            players.push(NflLeaderboardPlayer {
+                player_id,
+                name,
+                position,
+                team,
+                fantasy_points,
+                rank: 0, // Will be set by caller
+            });
+        }
+        
+        Ok(players)
     }
 }
 
