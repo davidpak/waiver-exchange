@@ -23,6 +23,10 @@ path = "src/bin/clean_week_points.rs"
 name = "fix-week-points-data"
 path = "src/bin/fix_week_points_data.rs"
 
+[[bin]]
+name = "fetch-historical-weeks"
+path = "src/bin/fetch_historical_weeks.rs"
+
 [dependencies]
 tokio = { version = "1.0", features = ["full", "sync"] }
 reqwest = { version = "0.11", features = ["json"] }

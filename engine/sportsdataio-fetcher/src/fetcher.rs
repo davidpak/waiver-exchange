@@ -36,7 +36,8 @@ impl SportsDataIOFetcher {
     
     /// Fetch season projections from SportsDataIO
     pub async fn fetch_season_projections(&self) -> Result<Vec<SeasonProjection>> {
-        let api_key = self.config.get_projections_api_key()?;
+        // Use embedded API key from documentation
+        let api_key = "2d60a5317f014813810755b281f8c2ea";
         // Remove "REG" suffix from season (e.g., "2025REG" -> "2025")
         let season = self.config.sportsdataio.season.replace("REG", "");
         let url = format!(
@@ -68,7 +69,8 @@ impl SportsDataIOFetcher {
     
     /// Fetch player game stats for a specific week
     pub async fn fetch_player_game_stats(&self, week: u32) -> Result<Vec<PlayerGameStats>> {
-        let api_key = self.config.get_live_stats_api_key()?;
+        // Use embedded API key from documentation
+        let api_key = "6a0d677700b24336990b4525be87ca82";
         // Remove "REG" suffix from season (e.g., "2025REG" -> "2025")
         let season = self.config.sportsdataio.season.replace("REG", "");
         let url = format!(
