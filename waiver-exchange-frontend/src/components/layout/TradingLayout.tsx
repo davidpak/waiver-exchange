@@ -4,6 +4,7 @@ import { useAutoAnimate } from '@/hooks/useAutoAnimate';
 import { AppShell, Box, Stack, Tabs, Text, useMantineTheme } from '@mantine/core';
 import { useState } from 'react';
 import { AccountSummary } from '../trading/AccountSummary';
+import { MarketPage } from '../trading/MarketPage';
 import { SymbolView } from '../trading/SymbolView';
 import { Header } from './Header';
 
@@ -23,7 +24,14 @@ export function TradingLayout({
   const [animateRef] = useAutoAnimate();
   const [activeTab, setActiveTab] = useState<string>('symbol');
   const [selectedSymbolId, setSelectedSymbolId] = useState<number>(764); // Default to Josh Allen
+  const [currentRoute, setCurrentRoute] = useState<string>('dashboard');
   const theme = useMantineTheme();
+
+  // Handle navigation from header
+  const handleNavigation = (route: string) => {
+    setCurrentRoute(route);
+    onNavigate?.(route);
+  };
 
   return (
     <AppShell
@@ -41,19 +49,29 @@ export function TradingLayout({
       }}
     >
       <Header 
-        onNavigate={onNavigate}
+        onNavigate={handleNavigation}
         onToggleTheme={onToggleTheme}
       />
 
       <AppShell.Main ref={animateRef} p="md" style={{ height: '100%' }}>
-        {/* Desktop Layout - CSS Grid */}
-        <Box visibleFrom="md" style={{ 
-          height: '100%',
-          display: 'grid',
-          gridTemplateColumns: '1fr 1.5fr 1fr', // Left: 1, Center: 1.5, Right: 1
-          gridTemplateRows: '1fr', // Single row taking full height
-          gap: '12px'
-        }}>
+        {/* Route-based rendering */}
+        {currentRoute === 'market' ? (
+          /* Market Page - Full Width */
+          <Box style={{ height: '100%' }}>
+            <MarketPage 
+              onSymbolSelect={setSelectedSymbolId}
+              style={{ height: '100%' }}
+            />
+          </Box>
+        ) : (
+          /* Desktop Layout - CSS Grid */
+          <Box visibleFrom="md" style={{ 
+            height: '100%',
+            display: 'grid',
+            gridTemplateColumns: '1fr 1.5fr 1fr', // Left: 1, Center: 1.5, Right: 1
+            gridTemplateRows: '1fr', // Single row taking full height
+            gap: '12px'
+          }}>
           {/* Left Column - Account Summary + Holdings (50/50 split) */}
           <div style={{ 
             display: 'grid',
@@ -139,7 +157,8 @@ export function TradingLayout({
               News Feed
             </div>
           </div>
-        </Box>
+          </Box>
+        )}
 
         {/* Mobile Layout - Tabs */}
         <Box hiddenFrom="md" style={{ height: '100%' }}>
@@ -174,6 +193,7 @@ export function TradingLayout({
           >
             <Tabs.List>
               <Tabs.Tab value="symbol">Symbol</Tabs.Tab>
+              <Tabs.Tab value="market">Market</Tabs.Tab>
               <Tabs.Tab value="trading">Trading</Tabs.Tab>
               <Tabs.Tab value="holdings">Holdings</Tabs.Tab>
               <Tabs.Tab value="account">Account</Tabs.Tab>
@@ -193,6 +213,24 @@ export function TradingLayout({
                 <SymbolView 
                   symbolId={selectedSymbolId} 
                   onSymbolChange={setSelectedSymbolId}
+                  style={{ minHeight: '100%' }} 
+                />
+              </div>
+            </Tabs.Panel>
+
+            <Tabs.Panel value="market" pt="md" style={{ height: '100%' }}>
+              <div 
+                className="hide-scrollbar"
+                style={{ 
+                  minHeight: 0, // Critical for proper overflow behavior
+                  overflow: 'auto', // Allow scrolling if content overflows
+                  height: '100%', // Ensure the container takes full height
+                  scrollbarWidth: 'none', // Firefox
+                  msOverflowStyle: 'none', // IE/Edge
+                }}
+              >
+                <MarketPage 
+                  onSymbolSelect={setSelectedSymbolId}
                   style={{ minHeight: '100%' }} 
                 />
               </div>

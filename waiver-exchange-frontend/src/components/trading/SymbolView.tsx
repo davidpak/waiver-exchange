@@ -3,34 +3,33 @@
 
 import { apiClient } from '@/lib/api-client';
 import type {
-  AccountSummaryResponse,
-  CurrentPriceResponse,
-  PriceHistoryResponse,
-  SnapshotResponse,
-  SymbolInfoResponse,
-  Timeframe
+    AccountSummaryResponse,
+    PriceHistoryResponse,
+    SnapshotResponse,
+    SymbolInfoResponse,
+    Timeframe
 } from '@/types/api';
 import {
-  Alert,
-  Badge,
-  Box,
-  Button,
-  Card,
-  Group,
-  Modal,
-  ScrollArea,
-  Skeleton,
-  Stack,
-  Text,
-  TextInput,
-  ThemeIcon
+    Alert,
+    Badge,
+    Box,
+    Button,
+    Card,
+    Group,
+    Modal,
+    ScrollArea,
+    Skeleton,
+    Stack,
+    Text,
+    TextInput,
+    ThemeIcon
 } from '@mantine/core';
 import {
-  IconAlertCircle,
-  IconChartLine,
-  IconSearch,
-  IconTrendingDown,
-  IconTrendingUp
+    IconAlertCircle,
+    IconChartLine,
+    IconSearch,
+    IconTrendingDown,
+    IconTrendingUp
 } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -144,22 +143,21 @@ export function SymbolView({ symbolId, onSymbolChange, className, style }: Symbo
     staleTime: 2500, // 2.5 seconds
   });
 
-  // Fetch current price as fallback
+  // Fetch bulk prices for all symbols (more efficient)
   const {
-    data: currentPriceData,
-    isLoading: currentPriceLoading,
-    error: currentPriceError,
-  } = useQuery<CurrentPriceResponse>({
-    queryKey: ['current-price', symbolId],
-    queryFn: () => apiClient.rest.getCurrentPrice(symbolId),
-    refetchInterval: 10000, // 10 seconds
-    staleTime: 5000, // 5 seconds
-    enabled: !snapshot?.state.order_books[symbolId.toString()]?.last_trade_price, // Only fetch if no price from snapshot
+    data: bulkPricesData,
+    isLoading: bulkPricesLoading,
+    error: bulkPricesError,
+  } = useQuery({
+    queryKey: ['bulk-prices'],
+    queryFn: () => apiClient.rest.getAllPrices(),
+    refetchInterval: 1000, // 1 second
+    staleTime: 500, // 500ms
   });
 
   // Calculate current price with fallback
   const currentPrice = snapshot?.state.order_books[symbolId.toString()]?.last_trade_price || 
-                      currentPriceData?.price || 
+                      bulkPricesData?.prices[symbolId.toString()] || 
                       null;
   const dayChange = React.useMemo(() => {
     // Try to get day change from price history
@@ -225,7 +223,7 @@ export function SymbolView({ symbolId, onSymbolChange, className, style }: Symbo
   };
 
   // Loading state
-  if (symbolInfoLoading || snapshotLoading) {
+  if (symbolInfoLoading || snapshotLoading || bulkPricesLoading) {
     return (
       <Card className={className} style={style} padding="lg" radius="md" withBorder>
         <Stack gap="md">
@@ -242,7 +240,7 @@ export function SymbolView({ symbolId, onSymbolChange, className, style }: Symbo
   }
 
   // Error state
-  if (symbolInfoError || snapshotError) {
+  if (symbolInfoError || snapshotError || bulkPricesError) {
     return (
       <Card className={className} style={style} padding="lg" radius="md" withBorder>
         <Alert
