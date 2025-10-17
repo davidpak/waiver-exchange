@@ -243,6 +243,13 @@ pub struct CurrentPriceResponse {
     pub last_updated: String,
 }
 
+/// Bulk prices response
+#[derive(Serialize, Deserialize)]
+pub struct BulkPricesResponse {
+    pub prices: std::collections::HashMap<String, u64>, // symbol_id -> price in cents
+    pub last_updated: String,
+}
+
 /// Get current price for a symbol (checks multiple sources)
 pub async fn get_current_price(
     symbol_id: u32,
@@ -285,35 +292,42 @@ pub async fn get_current_price(
 
 /// Get fair price for a symbol from RPE engine
 async fn get_fair_price_for_symbol(symbol_id: u32, db_pool: &PgPool) -> Result<Option<FairPriceData>, sqlx::Error> {
-    // First, get the player_id for this symbol_id
-    let player_id_row = sqlx::query!(
-        "SELECT sportsdataio_player_id FROM player_id_mapping WHERE our_symbol_id = $1",
+    // Directly use symbol_id as player_id since we now store symbol_id in the player_id column
+    // Get the most recent record regardless of source
+    let fair_price_row = sqlx::query!(
+        "SELECT fair_cents, source, confidence_score, ts FROM rpe_fair_prices WHERE player_id = $1 ORDER BY ts DESC LIMIT 1",
         symbol_id as i32
     )
     .fetch_optional(db_pool)
     .await?;
     
-    let player_id = match player_id_row {
-        Some(row) => row.sportsdataio_player_id,
-        None => return Ok(None),
-    };
-    
-    // Get the fair price
-    let fair_price_row = sqlx::query!(
-        "SELECT fair_cents, source, confidence_score, ts FROM rpe_fair_prices WHERE player_id = $1 ORDER BY ts DESC LIMIT 1",
-        player_id
+    // Also get all records for debugging
+    let all_records = sqlx::query!(
+        "SELECT fair_cents, source, confidence_score, ts FROM rpe_fair_prices WHERE player_id = $1 ORDER BY ts DESC",
+        symbol_id as i32
     )
-    .fetch_optional(db_pool)
+    .fetch_all(db_pool)
     .await?;
     
+    tracing::info!("All records for symbol {}: {:?}", symbol_id, all_records);
+    
     match fair_price_row {
-        Some(row) => Ok(Some(FairPriceData {
-            fair_cents: row.fair_cents,
-            source: row.source.unwrap_or_else(|| "unknown".to_string()),
-            confidence_score: row.confidence_score.unwrap_or_default().to_f64().unwrap_or(0.0),
-            updated_at: row.ts,
-        })),
-        None => Ok(None),
+        Some(row) => {
+            // Log for debugging
+            tracing::info!("Found fair price for symbol {}: {} cents, source: {:?}, ts: {:?}", 
+                symbol_id, row.fair_cents, row.source, row.ts);
+            
+            Ok(Some(FairPriceData {
+                fair_cents: row.fair_cents,
+                source: row.source.unwrap_or_else(|| "unknown".to_string()),
+                confidence_score: row.confidence_score.unwrap_or_default().to_f64().unwrap_or(0.0),
+                updated_at: row.ts,
+            }))
+        },
+        None => {
+            tracing::warn!("No fair price found for symbol {}", symbol_id);
+            Ok(None)
+        }
     }
 }
 
@@ -327,6 +341,42 @@ async fn get_latest_price_from_history(symbol_id: u32, db_pool: &PgPool) -> Resu
     .await?;
     
     Ok(row.map(|r| r.close_price))
+}
+
+/// Get bulk prices for all symbols
+pub async fn get_bulk_prices(
+    db_pool: Arc<PgPool>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    // Get all fair prices from RPE engine
+    let fair_prices = sqlx::query!(
+        "SELECT DISTINCT ON (player_id) player_id, fair_cents, ts FROM rpe_fair_prices ORDER BY player_id, ts DESC"
+    )
+    .fetch_all(&*db_pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to fetch bulk prices: {}", e);
+        warp::reject::custom(NotFoundError(ErrorResponse {
+            error: ErrorDetail {
+                code: "DATABASE_ERROR".to_string(),
+                message: "Failed to fetch bulk prices".to_string(),
+                details: Some(serde_json::Value::String(e.to_string())),
+            },
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        }))
+    })?;
+
+    // Convert to HashMap
+    let mut prices = std::collections::HashMap::new();
+    for row in fair_prices {
+        prices.insert(row.player_id.to_string(), row.fair_cents as u64);
+    }
+
+    let response = BulkPricesResponse {
+        prices,
+        last_updated: chrono::Utc::now().to_rfc3339(),
+    };
+
+    Ok(warp::reply::json(&response))
 }
 
 /// Fair price data structure
@@ -889,6 +939,16 @@ pub fn create_routes(
             get_current_price(symbol_id, db_pool).await
         });
 
+    // Bulk prices endpoint
+    let bulk_prices = warp::path("api")
+        .and(warp::path("symbols"))
+        .and(warp::path("prices"))
+        .and(warp::get())
+        .and(db_pool_filter.clone())
+        .and_then(|db_pool: Arc<PgPool>| async move {
+            get_bulk_prices(db_pool).await
+        });
+
     // Price history endpoint
     let price_history = warp::path("api")
         .and(warp::path("price-history"))
@@ -962,6 +1022,7 @@ pub fn create_routes(
     symbol_info
         .or(all_players)
         .or(current_price)
+        .or(bulk_prices)
         .or(price_history)
         .or(account_summary)
         .or(equity_history)
