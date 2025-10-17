@@ -1,176 +1,210 @@
-use crate::config::RpeConfig;
-use crate::models::*;
-use crate::calculator::PriceCalculator;
-use anyhow::{Context, Result};
-use bigdecimal::{BigDecimal, FromPrimitive};
-use sqlx::PgPool;
+use anyhow::Context;
 use std::collections::HashMap;
-use tracing::{info, warn, error};
+use std::fs;
+use sqlx::PgPool;
+use tracing::info;
+use bigdecimal::{ToPrimitive, FromPrimitive};
 
-/// Main RPE Engine
+use crate::{
+    config::RpeConfig,
+    calculator::{PriceCalculator, LeaderboardCalculator, PlayerPerformance},
+    models::{SeasonProjectionJson, WeeklyPlayerData, RpeEvent},
+};
+use serde::{Deserialize, Serialize};
+
+#[derive(Debug, Deserialize, Serialize)]
+struct SeasonProjectionsJson {
+    season: String,
+    last_updated: String,
+    players: Vec<SeasonProjectionJson>,
+}
+
 pub struct RpeEngine {
     config: RpeConfig,
     calculator: PriceCalculator,
+    leaderboard_calc: LeaderboardCalculator,
     pool: PgPool,
-    last_prices: HashMap<i32, i64>, // player_id -> last_fair_cents
+    last_prices: HashMap<i32, i64>,
 }
 
 impl RpeEngine {
-    /// Create a new RPE engine
-    pub async fn new(config: RpeConfig) -> Result<Self> {
+    pub async fn new(config: RpeConfig) -> anyhow::Result<Self> {
+        info!("🔧 Creating RPE Engine with Leaderboard-First Pricing");
+        
+        let calculator = PriceCalculator::new(config.clone());
+        let leaderboard_calc = LeaderboardCalculator::new(config.clone());
         let pool = PgPool::connect(&config.database.url)
             .await
             .context("Failed to connect to database")?;
         
-        let calculator = PriceCalculator::new(config.clone());
+        info!("✅ RPE Engine created successfully");
         
         Ok(Self {
             config,
             calculator,
+            leaderboard_calc,
             pool,
             last_prices: HashMap::new(),
         })
     }
-    
-    /// Process season projections and calculate initial F₀ prices
-    pub async fn process_season_projections(&mut self) -> Result<Vec<RpeEvent>> {
-        info!("Processing season projections for initial F₀ calculations");
+
+    /// Process Fair Price 2.3 - NFL Leaderboard + Weekly Rankings + Season Projections
+    /// Combines real NFL rankings with weekly performance and season projections
+    pub async fn process_fair_price_2_0(&mut self) -> anyhow::Result<Vec<RpeEvent>> {
+        info!("🚀 Starting Fair Price 2.3 - NFL Leaderboard + Weekly Rankings + Season Projections");
         
-        let projections = self.load_season_projections().await?;
+        // Load season projections from JSON (relative to project root)
+        let projections_content = fs::read_to_string("../../data/players/season_projections_2025.json")?;
+        let projections_data: SeasonProjectionsJson = serde_json::from_str(&projections_content)?;
+        
+        // Load NFL Fantasy leaderboard data
+        let leaderboard_content = fs::read_to_string("../../data/players/nfl_fantasy_leaderboard_2025.json")?;
+        let leaderboard_data: serde_json::Value = serde_json::from_str(&leaderboard_content)?;
+        let nfl_players: Vec<serde_json::Value> = leaderboard_data["players"].as_array().unwrap().clone();
+        
+        // Load weekly data from JSON files
+        let mut weekly_data_map = HashMap::new();
+        for week in 1..=6 {
+            let filename = format!("../../data/players/week_{}_stats_2025.json", week);
+            if std::path::Path::new(&filename).exists() {
+                let weekly_content = fs::read_to_string(&filename)?;
+                let weekly_data: WeeklyPlayerData = serde_json::from_str(&weekly_content)?;
+                weekly_data_map.insert(week, weekly_data);
+            }
+        }
+
+        info!("📊 Loaded {} season projections", projections_data.players.len());
+        info!("🏆 Loaded {} NFL leaderboard players", nfl_players.len());
+        info!("📅 Loaded weekly data for {} weeks", weekly_data_map.len());
+
+        // Build player performance data for all players
+        let mut player_performances = Vec::new();
+        for projection in &projections_data.players {
+            // Find NFL leaderboard ranking for this player
+            let nfl_rank = nfl_players.iter()
+                .find(|p| p["name"].as_str() == Some(&projection.name))
+                .and_then(|p| p["rank"].as_u64())
+                .unwrap_or(500) as u32; // Default to rank 500 if not found
+            
+            // Find weekly data for this player by symbol_id
+            let mut player_weekly_points = Vec::new();
+            let mut player_weekly_ranks = Vec::new();
+            for (week, weekly_data) in &weekly_data_map {
+                if let Some(player) = weekly_data.players.iter().find(|p| p.symbol_id == Some(projection.symbol_id)) {
+                    player_weekly_points.push((*week, player.fantasy_points));
+                    if let Some(rank) = player.rank {
+                        player_weekly_ranks.push((*week, rank));
+                    }
+                }
+            }
+
+            let player_perf = self.leaderboard_calc.build_player_performance_with_rankings(
+                projection.symbol_id as i32,
+                &projection.name,
+                &projection.position,
+                projection.projected_points.to_f64().unwrap_or(0.0),
+                &player_weekly_points,
+                nfl_rank,
+                &player_weekly_ranks,
+            );
+            player_performances.push(player_perf);
+        }
+
+        // Build cohort statistics
+        let cohort_stats = self.leaderboard_calc.build_cohort_stats(&player_performances);
+        info!("📈 Built cohort stats for {} players", player_performances.len());
+
         let mut events = Vec::new();
         let mut processed_count = 0;
         let mut updated_count = 0;
+
+        info!("🔄 Processing {} players with leaderboard-first pricing...", player_performances.len());
         
-        for projection in projections {
-            match self.calculator.calculate_from_projection(&projection) {
-                Ok(calculation) => {
-                    // Store the fair price (only if no recent live data exists)
-                    if let Err(e) = self.store_fair_price_if_no_live_data(&calculation).await {
-                        error!("Failed to store fair price for player {}: {}", calculation.player_id, e);
-                        events.push(RpeEvent::CalculationFailed {
-                            player_id: calculation.player_id,
-                            error: e.to_string(),
-                            timestamp: chrono::Utc::now(),
-                        });
-                        continue;
+        for player_perf in &player_performances {
+            info!("Processing player: {} (ID: {}, Total: {:.1} pts, PPG: {:.1})", 
+                  player_perf.name, player_perf.player_id, player_perf.total_points, player_perf.ppg_shrunk);
+
+            // Calculate leaderboard-based target price (primary driver - 80% weight)
+            let leaderboard_price = self.leaderboard_calc.calculate_leaderboard_price(
+                player_perf,
+                &cohort_stats,
+                6, // Current week
+            )?;
+
+            // Calculate momentum adjustment (background - 20% weight)
+            let momentum_adjustment = self.calculate_momentum_adjustment(player_perf)?;
+
+            // Final price = Leaderboard price + small momentum adjustment
+            let final_price_dollars = leaderboard_price + momentum_adjustment;
+            let final_price_cents = (final_price_dollars * 100.0) as i64;
+
+            info!("💰 Final price for {}: ${:.2} (Leaderboard: ${:.2}, Momentum: ${:.2})", 
+                  player_perf.name, final_price_dollars, leaderboard_price, momentum_adjustment);
+
+            // Store in database
+            let result = sqlx::query!(
+                r#"
+                INSERT INTO rpe_fair_prices (player_id, ts, season, week, fair_cents, band_bps, kappa_cents_per_pt, pacing_mode, actual_pts, delta_pts, reason)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+                ON CONFLICT (player_id) DO UPDATE SET
+                    ts = EXCLUDED.ts,
+                    season = EXCLUDED.season,
+                    week = EXCLUDED.week,
+                    fair_cents = EXCLUDED.fair_cents,
+                    band_bps = EXCLUDED.band_bps,
+                    kappa_cents_per_pt = EXCLUDED.kappa_cents_per_pt,
+                    pacing_mode = EXCLUDED.pacing_mode,
+                    actual_pts = EXCLUDED.actual_pts,
+                    delta_pts = EXCLUDED.delta_pts,
+                    reason = EXCLUDED.reason
+                "#,
+                player_perf.player_id,
+                chrono::Utc::now(),
+                self.config.rpe.season,
+                None::<i32>, // No specific week for Fair Price 2.2
+                final_price_cents,
+                self.config.rpe.ingame_band_bps as i32,
+                0, // Not using kappa in leaderboard pricing
+                "fair_price_2_2_leaderboard",
+                bigdecimal::BigDecimal::from_f64(player_perf.total_points).unwrap_or_default(),
+                bigdecimal::BigDecimal::from_f64(momentum_adjustment).unwrap_or_default(),
+                serde_json::json!({
+                    "fair_price_2_2": {
+                        "leaderboard_price": leaderboard_price,
+                        "momentum_adjustment": momentum_adjustment,
+                        "total_points": player_perf.total_points,
+                        "ppg_shrunk": player_perf.ppg_shrunk,
+                        "recent_form": player_perf.recent_form,
+                        "games_played": player_perf.games_played
                     }
-                    
-                    // Check if price changed significantly
-                    let last_price = self.last_prices.get(&calculation.player_id).copied().unwrap_or(0);
-                    let delta_cents = calculation.ft_cents - last_price;
-                    
-                    if delta_cents.abs() >= self.config.events.min_change_cents {
-                        self.last_prices.insert(calculation.player_id, calculation.ft_cents);
-                        updated_count += 1;
-                        
-                        events.push(RpeEvent::FairPriceUpdated {
-                            player_id: calculation.player_id,
-                            fair_cents: calculation.ft_cents,
-                            delta_cents,
-                            reason: calculation.reason,
-                            timestamp: chrono::Utc::now(),
-                        });
-                    }
-                    
-                    processed_count += 1;
-                }
-                Err(e) => {
-                    error!("Failed to calculate price for player {}: {}", projection.player_id, e);
-                    events.push(RpeEvent::CalculationFailed {
-                        player_id: projection.player_id,
-                        error: e.to_string(),
-                        timestamp: chrono::Utc::now(),
-                    });
-                }
-            }
-        }
-        
-        events.push(RpeEvent::BatchCompleted {
-            processed_count,
-            updated_count,
-            timestamp: chrono::Utc::now(),
-        });
-        
-        info!("Processed {} projections, updated {} prices", processed_count, updated_count);
-        Ok(events)
-    }
-    
-    /// Process player week points and update Fₜ prices
-    pub async fn process_player_week_points(&mut self, week: u32) -> Result<Vec<RpeEvent>> {
-        info!("Processing player week points for week {}", week);
-        
-        let week_points = self.load_player_week_points(week).await?;
-        let mut events = Vec::new();
-        let mut processed_count = 0;
-        let mut updated_count = 0;
-        
-        // Group by player_id and get latest points
-        let mut latest_points: HashMap<i32, PlayerWeekPoints> = HashMap::new();
-        for points in week_points {
-            let entry = latest_points.entry(points.player_id).or_insert_with(|| points.clone());
-            if points.ts > entry.ts {
-                *entry = points;
-            }
-        }
-        
-        for (player_id, current_points) in latest_points {
-            // Get previous points for delta calculation
-            let prev_points = self.get_previous_week_points(player_id, week).await?;
+                }),
+            )
+            .execute(&self.pool)
+            .await
+            .context("Failed to store fair price")?;
             
-            // Get the player's position and F₀
-            let (position, f0_cents) = match self.get_player_info(player_id).await? {
-                Some((pos, f0)) => (pos, f0),
-                None => {
-                    warn!("No player info found for player {}", player_id);
-                    continue;
-                }
-            };
-            
-            let calculation = if let Some(prev) = prev_points {
-                // Calculate with delta from previous week
-                self.calculator.calculate_from_delta(
-                    player_id,
-                    &position,
-                    f0_cents,
-                    current_points.fantasy_pts.clone(),
-                    prev.fantasy_pts,
-                )?
-            } else {
-                // No previous points, but we still have F₀ from season projection
-                // Just use the current points as the baseline for future deltas
-                self.calculator.calculate_from_delta(
-                    player_id,
-                    &position,
-                    f0_cents,
-                    current_points.fantasy_pts.clone(),
-                    current_points.fantasy_pts.clone(), // No delta on first week
-                )?
-            };
-            
-            // Store the fair price
-            if let Err(e) = self.store_fair_price(&calculation).await {
-                error!("Failed to store fair price for player {}: {}", player_id, e);
-                events.push(RpeEvent::CalculationFailed {
-                    player_id,
-                    error: e.to_string(),
-                    timestamp: chrono::Utc::now(),
-                });
-                continue;
-            }
+            info!("✅ Successfully updated database: {} rows affected", result.rows_affected());
             
             // Check if price changed significantly
-            let last_price = self.last_prices.get(&player_id).copied().unwrap_or(0);
-            let delta_cents = calculation.ft_cents - last_price;
+            let last_price = self.last_prices.get(&player_perf.player_id).copied().unwrap_or(0);
+            let delta_cents = final_price_cents - last_price;
             
-            if delta_cents.abs() >= self.config.events.min_change_cents {
-                self.last_prices.insert(player_id, calculation.ft_cents);
+            if delta_cents.abs() >= self.config.events.min_change_cents as i64 {
+                self.last_prices.insert(player_perf.player_id, final_price_cents);
                 updated_count += 1;
                 
+                let reason = crate::models::CalculationReason::LeaderboardBased {
+                    leaderboard_score: 0.0, // Will be calculated properly later
+                    total_points: player_perf.total_points,
+                    ppg_shrunk: player_perf.ppg_shrunk,
+                    recent_form: player_perf.recent_form,
+                };
+                
                 events.push(RpeEvent::FairPriceUpdated {
-                    player_id,
-                    fair_cents: calculation.ft_cents,
+                    player_id: player_perf.player_id,
+                    fair_cents: final_price_cents,
                     delta_cents,
-                    reason: calculation.reason,
+                    reason,
                     timestamp: chrono::Utc::now(),
                 });
             }
@@ -184,226 +218,24 @@ impl RpeEngine {
             timestamp: chrono::Utc::now(),
         });
         
-        info!("Processed {} players, updated {} prices", processed_count, updated_count);
+        info!("✅ Fair Price 2.2 processing complete: {} processed, {} updated", processed_count, updated_count);
         Ok(events)
     }
-    
-    /// Load season projections from database
-    async fn load_season_projections(&self) -> Result<Vec<SeasonProjection>> {
-        let projections = sqlx::query_as!(
-            SeasonProjection,
-            r#"
-            SELECT player_id, season, proj_points, fantasy_pos, adp, source, ingested_at
-            FROM projections_season
-            WHERE season = $1
-            ORDER BY player_id
-            "#,
-            self.config.rpe.season
-        )
-        .fetch_all(&self.pool)
-        .await
-        .context("Failed to load season projections")?;
-        
-        info!("Loaded {} season projections", projections.len());
-        Ok(projections)
-    }
-    
-    /// Load player week points from database
-    async fn load_player_week_points(&self, week: u32) -> Result<Vec<PlayerWeekPoints>> {
-        let points = sqlx::query_as!(
-            PlayerWeekPoints,
-            r#"
-            SELECT player_id, season, week, ts, fantasy_pts, is_game_over, raw
-            FROM player_week_points
-            WHERE season = $1 AND week = $2
-            ORDER BY player_id, ts
-            "#,
-            self.config.rpe.season,
-            week as i32
-        )
-        .fetch_all(&self.pool)
-        .await
-        .context("Failed to load player week points")?;
-        
-        info!("Loaded {} player week points for week {}", points.len(), week);
-        Ok(points)
-    }
-    
-    /// Get previous week points for a player
-    async fn get_previous_week_points(&self, player_id: i32, current_week: u32) -> Result<Option<PlayerWeekPoints>> {
-        let prev_week = current_week - 1;
-        if prev_week == 0 {
-            return Ok(None);
-        }
-        
-        let points = sqlx::query_as!(
-            PlayerWeekPoints,
-            r#"
-            SELECT player_id, season, week, ts, fantasy_pts, is_game_over, raw
-            FROM player_week_points
-            WHERE player_id = $1 AND season = $2 AND week = $3
-            ORDER BY ts DESC
-            LIMIT 1
-            "#,
-            player_id,
-            self.config.rpe.season,
-            prev_week as i32
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .context("Failed to load previous week points")?;
-        
-        Ok(points)
-    }
-    
-    /// Get player info (position and F₀) from database
-    async fn get_player_info(&self, player_id: i32) -> Result<Option<(String, i64)>> {
-        // Try to get from projections first
-        let projection = sqlx::query!(
-            r#"
-            SELECT fantasy_pos, proj_points
-            FROM projections_season
-            WHERE player_id = $1 AND season = $2
-            "#,
-            player_id,
-            self.config.rpe.season
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .context("Failed to load player projection")?;
-        
-        if let Some(proj) = projection {
-            let f0_cents = self.calculator.calculate_f0(&SeasonProjection {
-                player_id,
-                season: self.config.rpe.season,
-                proj_points: proj.proj_points,
-                fantasy_pos: proj.fantasy_pos.clone(),
-                adp: None,
-                source: "lookup".to_string(),
-                ingested_at: chrono::Utc::now(),
-            })?;
-            
-            return Ok(Some((proj.fantasy_pos, f0_cents)));
-        }
-        
-        // Fallback: try to get from player_id_mapping
-        let mapping = sqlx::query!(
-            r#"
-            SELECT position
-            FROM player_id_mapping
-            WHERE sportsdataio_player_id = $1
-            "#,
-            player_id
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .context("Failed to load player mapping")?;
-        
-        if let Some(map) = mapping {
-            // Use default F₀ for unmapped players
-            let f0_cents = self.config.rpe.base_cents;
-            return Ok(Some((map.position.unwrap_or_default(), f0_cents)));
-        }
-        
-        Ok(None)
-    }
-    
-    /// Store fair price in database (only if no recent live data exists)
-    async fn store_fair_price_if_no_live_data(&self, calculation: &RpeCalculation) -> Result<()> {
-        // Check if we have recent live data (within last 10 minutes)
-        let live_threshold = chrono::Utc::now() - chrono::Duration::minutes(10);
-        
-        let has_recent_live_data = sqlx::query!(
-            r#"
-            SELECT player_id
-            FROM rpe_fair_prices
-            WHERE player_id = $1 
-            AND ts > $2
-            AND reason->>'source' = 'live_points'
-            LIMIT 1
-            "#,
-            calculation.player_id,
-            live_threshold
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .context("Failed to check for recent live data")?;
-        
-        // If we have recent live data, skip storing projection-based price
-        if has_recent_live_data.is_some() {
-            return Ok(());
-        }
-        
-        // Store the projection-based price
-        self.store_fair_price(calculation).await
-    }
-    
-    /// Store fair price in database (upsert - update existing or insert new)
-    async fn store_fair_price(&self, calculation: &RpeCalculation) -> Result<()> {
-        let record = FairPriceRecord::new(
-            calculation.player_id,
-            self.config.rpe.season,
-            Some(self.config.rpe.week as i32),
-            calculation.ft_cents,
-            self.config.rpe.ingame_band_bps,
-            calculation.kappa,
-            self.config.rpe.pacing_mode.clone(),
-            calculation.actual_pts.clone(),
-            calculation.delta_pts.clone(),
-            calculation.reason.clone(),
-        );
-        
-        // Determine source based on reason
-        let source = match &calculation.reason {
-            crate::models::CalculationReason::Projection { .. } => "projection",
-            crate::models::CalculationReason::FantasyPointsDelta { .. } => "live_points",
-            crate::models::CalculationReason::PacingStep { .. } => "hybrid",
+
+    /// Calculate small momentum adjustment (background factor)
+    fn calculate_momentum_adjustment(&self, player_perf: &PlayerPerformance) -> anyhow::Result<f64> {
+        // Simple momentum based on recent form vs season average
+        let season_avg = if player_perf.games_played > 0 {
+            player_perf.total_points / player_perf.games_played as f64
+        } else {
+            0.0
         };
+
+        let momentum = player_perf.recent_form - season_avg;
         
-        info!("Storing fair price for player {}: {} cents, source: {}", 
-              calculation.player_id, calculation.ft_cents, source);
+        // Cap momentum adjustment at ±$10
+        let adjustment = (momentum * 0.5).clamp(-10.0, 10.0);
         
-        // Upsert: update existing record or insert new one
-        let result = sqlx::query!(
-            r#"
-            INSERT INTO rpe_fair_prices (player_id, ts, season, week, fair_cents, band_bps, kappa_cents_per_pt, pacing_mode, actual_pts, delta_pts, reason, source, confidence_score)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-            ON CONFLICT (player_id) 
-            DO UPDATE SET
-                ts = EXCLUDED.ts,
-                season = EXCLUDED.season,
-                week = EXCLUDED.week,
-                fair_cents = EXCLUDED.fair_cents,
-                band_bps = EXCLUDED.band_bps,
-                kappa_cents_per_pt = EXCLUDED.kappa_cents_per_pt,
-                pacing_mode = EXCLUDED.pacing_mode,
-                actual_pts = EXCLUDED.actual_pts,
-                delta_pts = EXCLUDED.delta_pts,
-                reason = EXCLUDED.reason,
-                source = EXCLUDED.source,
-                confidence_score = EXCLUDED.confidence_score
-            "#,
-            record.player_id,
-            record.ts,
-            record.season,
-            record.week,
-            record.fair_cents,
-            record.band_bps as i32,
-            record.kappa_cents_per_pt as i32,
-            record.pacing_mode,
-            record.actual_pts,
-            record.delta_pts,
-            record.reason,
-            source,
-            BigDecimal::from_f64(0.8).unwrap_or_default() // Default confidence score
-        )
-        .execute(&self.pool)
-        .await
-        .context("Failed to store fair price")?;
-        
-        info!("Successfully stored fair price for player {}: {} rows affected", 
-              calculation.player_id, result.rows_affected());
-        
-        Ok(())
+        Ok(adjustment)
     }
 }
