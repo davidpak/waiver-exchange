@@ -59,15 +59,38 @@ impl PlayerRegistry {
 
         info!("Loaded {} players from file", player_data.players.len());
 
-        // Assign symbol IDs to players
+        // Assign symbol IDs to players with collision handling
         let max_symbols = (player_data.players.len() * 2) as u32;
+        let mut used_symbol_ids = std::collections::HashSet::new();
+        
         for player in &mut player_data.players {
-            let symbol_id = ConsistentHasher::hash_to_symbol_id(
+            let mut symbol_id = ConsistentHasher::hash_to_symbol_id(
                 &player.name,
                 &player.position,
                 &player.team,
                 max_symbols,
             );
+            
+            // Handle hash collisions by linear probing
+            let mut attempts = 0;
+            while used_symbol_ids.contains(&symbol_id) && attempts < 1000 {
+                symbol_id = (symbol_id + 1) % max_symbols;
+                attempts += 1;
+            }
+            
+            if attempts >= 1000 {
+                warn!("Could not find available symbol ID for player: {}", player.name);
+                continue;
+            }
+            
+            if attempts > 0 {
+                info!(
+                    "Resolved hash collision for {} after {} attempts, using symbol ID {}",
+                    player.name, attempts, symbol_id
+                );
+            }
+            
+            used_symbol_ids.insert(symbol_id);
             player.symbol_id = Some(symbol_id);
         }
 
