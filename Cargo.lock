@@ -1019,38 +1019,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "evs-integration-test"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures-util",
- "reqwest",
- "serde",
- "serde_json",
- "sqlx",
- "tokio",
- "tokio-tungstenite 0.21.0",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
-name = "evs-test-bot"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "futures-util",
- "serde",
- "serde_json",
- "tokio",
- "tokio-tungstenite 0.20.1",
- "tracing",
- "tracing-subscriber",
- "uuid",
-]
-
-[[package]]
 name = "execution-manager"
 version = "0.1.0"
 dependencies = [
@@ -1736,22 +1704,6 @@ checksum = "206a8042aec68fa4a62e8d3f7aa4ceb508177d9324faf261e1959e495b7a1921"
 dependencies = [
  "equivalent",
  "hashbrown 0.15.5",
-]
-
-[[package]]
-name = "integration-test"
-version = "0.1.0"
-dependencies = [
- "account-service",
- "anyhow",
- "execution-manager",
- "order-gateway",
- "order-router",
- "sqlx",
- "symbol-coordinator",
- "tokio",
- "uuid",
- "whistle",
 ]
 
 [[package]]
@@ -4440,9 +4392,7 @@ checksum = "212d5dcb2a1ce06d81107c3d0ffa3121fe974b73f068c8282cb1c32328113b6c"
 dependencies = [
  "futures-util",
  "log",
- "native-tls",
  "tokio",
- "tokio-native-tls",
  "tungstenite 0.20.1",
 ]
 
@@ -4657,7 +4607,6 @@ dependencies = [
  "http 0.2.12",
  "httparse",
  "log",
- "native-tls",
  "rand 0.8.5",
  "sha1",
  "thiserror 1.0.69",

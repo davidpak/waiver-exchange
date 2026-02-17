@@ -18,8 +18,5 @@ members = [
     "engine/sportsdataio-fetcher",
     "engine/rpe-engine",
     "engine/market-maker",
-    "tools/integration-test",
-    "tools/evs-test-bot",
-    "tools/evs-integration-test",
     "tools/player-mapping-script",
 ]

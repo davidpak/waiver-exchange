@@ -4,24 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "test-fetcher"
-path = "src/bin/test_fetcher.rs"
-
-[[bin]]
 name = "populate-data"
 path = "src/bin/populate_data.rs"
-
-[[bin]]
-name = "debug-data"
-path = "src/bin/debug_data.rs"
-
-[[bin]]
-name = "clean-week-points"
-path = "src/bin/clean_week_points.rs"
-
-[[bin]]
-name = "fix-week-points-data"
-path = "src/bin/fix_week_points_data.rs"
 
 [[bin]]
 name = "fetch-historical-weeks"

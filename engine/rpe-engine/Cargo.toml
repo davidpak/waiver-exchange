@@ -4,47 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [[bin]]
-name = "test-rpe"
-path = "src/bin/test_rpe.rs"
-
-[[bin]]
-name = "test-rpe-proper-flow"
-path = "src/bin/test_rpe_proper_flow.rs"
-
-[[bin]]
-name = "clear-duplicates"
-path = "src/bin/clear_duplicates.rs"
-
-[[bin]]
-name = "test-fair2-real-data"
-path = "src/bin/test_fair2_real_data.rs"
-
-[[bin]]
-name = "find-star-players"
-path = "src/bin/find_star_players.rs"
-
-[[bin]]
-name = "test-fair2-star-players"
-path = "src/bin/test_fair2_star_players.rs"
-
-[[bin]]
-name = "test-fair2-simulated-weeks"
-path = "src/bin/test_fair2_simulated_weeks.rs"
-
-[[bin]]
 name = "add-symbol-ids-to-weekly"
 path = "src/bin/add_symbol_ids_to_weekly.rs"
-
-[[bin]]
-name = "fix-baker-mayfield"
-path = "src/bin/fix_baker_mayfield.rs"
-
-[[bin]]
-name = "check-baker-database"
-path = "src/bin/check_baker_database.rs"
-
-
-
 
 [dependencies]
 tokio = { version = "1.0", features = ["full", "sync"] }

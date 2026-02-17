@@ -25,19 +25,3 @@ persistence = { path = "../persistence" }
 [[bin]]
 name = "market-maker"
 path = "src/main.rs"
-
-[[bin]]
-name = "test-market-maker"
-path = "src/bin/test_market_maker.rs"
-
-[[bin]]
-name = "setup-house-account"
-path = "src/bin/setup_house_account.rs"
-
-[[bin]]
-name = "setup-market-maker-position"
-path = "src/bin/setup_market_maker_position.rs"
-
-[[bin]]
-name = "add-market-maker-balance"
-path = "src/bin/add_market_maker_balance.rs"
