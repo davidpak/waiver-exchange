@@ -192,10 +192,10 @@ The Whistle matching engine serves as the **reference implementation** for TDD s
 
 ### Next Steps
 
-1. **Apply TDD to remaining components**
-   - OrderRouter implementation
-   - ExecutionManager implementation
-   - SymbolCoordinator implementation
+1. **Apply TDD to frontend components**
+   - Frontend component tests (Vitest, Playwright)
+   - API integration tests for REST endpoints
+   - WebSocket interaction tests
 
 2. **Enhance test infrastructure**
    - Property-based testing framework
@@ -203,7 +203,7 @@ The Whistle matching engine serves as the **reference implementation** for TDD s
    - Determinism validation tools
 
 3. **Documentation improvements**
-   - Update all design docs with implementation details
+   - Keep design docs in sync with implementation
    - Add test examples to documentation
    - Create component interaction diagrams
 

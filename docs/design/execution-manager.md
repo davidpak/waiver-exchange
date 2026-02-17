@@ -1,3 +1,7 @@
+> **Implementation Status:** Mostly implemented. MPSC event ingestion, normalization, fanout dispatch, tick tracking, and trade settlement via AccountService all working. PostSettlementCallback extension mechanism exists. Flatbuffers serialization not used (direct event structs instead). WAL writing happens here, not in a separate ReplayEngine.
+
+---
+
 ---
 
 ## 1. Overview

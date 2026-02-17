@@ -314,9 +314,8 @@ cargo audit --ignore RUSTSEC-2024-0436 -D warnings
 cargo deny check licenses  # ← License compliance check
 cargo fmt --package whistle --package order-router --package symbol-coordinator --package execution-manager --package analytics-engine -- --check
 ```
-```
-```
 
+```bash
 # 2. Stage and commit
 git add .
 git commit -m "type(scope): description"

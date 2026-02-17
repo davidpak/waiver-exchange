@@ -1,3 +1,7 @@
+> **Implementation Status:** Mostly implemented. Core matching engine, order book, price-time priority, event emission all working. Cancel message processing is stubbed (returns UnknownOrder). Snapshot/recovery not yet implemented. Cold-start MARKET rejection not enforced.
+
+---
+
 ## 1. Overview
 
 `Whistle` is the high-performance, deterministic, **centralized order** matching engine at the core of The Waiver Exchange. It is responsible for processing and matching all order flow within a single player market (symbol), executing trades based on **strict price-time priority**, and enforcing key market rules that preserve fairness and stability.

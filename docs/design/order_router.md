@@ -1,3 +1,7 @@
+> **Implementation Status:** Partially implemented. Shard mapping and basic routing interfaces exist. Full routing logic (enq_seq stamping, backpressure handling, symbol activation coordination) is not yet implemented. Order routing currently handled directly in OrderGateway.
+
+---
+
 ## OrderRouter — Design (v0.1)
 
 Owner: David Pak

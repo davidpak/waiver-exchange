@@ -1,3 +1,7 @@
+> **Implementation Status:** RPE (Fair Price 2.3) is fully implemented. Market maker service exists and connects via WebSocket. Router-level micro-auction batching and House fallback logic described here are not yet implemented. SportsDataIO integration is working with free-tier API limits.
+
+---
+
 # Bot Integration and Reference Price Engine Doc
 This is the single source of truth for implementing a lively, fair, and efficient fantasy-player exchange with minimal liquidity and strict API limits.
 

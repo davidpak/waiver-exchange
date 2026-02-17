@@ -1,3 +1,7 @@
+> **Implementation Status:** Partially implemented. WAL and snapshot interfaces (PersistenceBackend trait) exist with local and in-memory backends. Cloud storage (S3/Glacier), WAL rotation, retention policy enforcement, and the full recovery procedure are not yet implemented.
+
+---
+
 # Persistence Layer Design
 
 ## 1. Overview

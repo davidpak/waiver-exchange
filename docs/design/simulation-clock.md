@@ -1,3 +1,7 @@
+> **Implementation Status:** Design vision. The SimulationClock crate exists with module structure but the autonomous tick processing loop described here is not yet operational. Time progression is currently managed through the main waiver-exchange-service orchestrator.
+
+---
+
 # SimulationClock Design Document
 
 ## 1. Overview

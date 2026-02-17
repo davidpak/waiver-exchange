@@ -1,3 +1,12 @@
+> **Implementation Status (as of Feb 2025):**
+> - Sections 1-5 (Whistle, OrderRouter, SymbolCoordinator, ExecutionManager, Persistence): Core architecture implemented. Some features stubbed — see individual design docs for details.
+> - Section 6 (SimulationClock): Design vision. Autonomous tick loop not yet operational.
+> - Section 9 (EquityValuationService): Service exists. Callback integration with ExecutionManager not implemented.
+> - Section 10 (AccountService): Fully implemented. Risk cache/epoch system described here is not built — risk checks use direct DB queries.
+> - Cold-start rules, halt mechanisms, and advanced cancel logic: Not enforced.
+
+---
+
 # The Waiver Exchange - System Architecture and Design Overview (v0.3)
 
 Owner: David Pak

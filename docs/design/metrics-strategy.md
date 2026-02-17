@@ -1,3 +1,7 @@
+> **Implementation Status:** Partially implemented. Basic atomic metrics collectors exist in ExecutionManager and OrderRouter. Whistle-level and SymbolCoordinator-level metrics described here are not yet implemented. Prometheus/Grafana integration, alerting system, and real-time metrics export are planned but not built.
+
+---
+
 ---
 title: "Production Metrics Strategy"
 description: "Comprehensive observability and monitoring strategy for battle-hardening the Waiver Exchange system"

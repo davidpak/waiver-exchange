@@ -1,3 +1,7 @@
+> **Implementation Status:** Implemented. WebSocket API, authentication, rate limiting, and market data broadcasting all working. Note: OAuth runs as a separate binary (`oauth-server` on port 8082) and REST API runs as a separate binary (`rest-server` on port 8083), not integrated into the main gateway binary. REST endpoints are not covered in this design doc — see `docs/api/waiver-exchange-api-documentation.md`.
+
+---
+
 # OrderGateway & Public API Design
 
 ## 1. Overview

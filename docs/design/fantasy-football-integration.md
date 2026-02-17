@@ -1,3 +1,7 @@
+> **Implementation Status:** Implemented. Player-to-symbol mapping with deterministic hashing and linear probing for collisions is working. Player data is loaded from pre-scraped JSON files via `player-scraper` crate, not from live Sleeper API calls as described in section 7. Real-time webhook updates are not implemented.
+
+---
+
 # Fantasy Football Integration Design
 
 ## 1. Overview

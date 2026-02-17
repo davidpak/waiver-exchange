@@ -3,7 +3,7 @@
 **Version**: 1.0  
 **Base URL**: `http://localhost:8083/api`  
 **WebSocket URL**: `ws://localhost:8081/ws`  
-**Last Updated**: January 2025  
+**Last Updated**: February 2026
 
 ## Table of Contents
 
@@ -258,6 +258,91 @@ Get real-time market data including order books and system state.
 **Example**:
 ```bash
 curl "http://localhost:8083/api/snapshot/current"
+```
+
+### 6. All Players (Bulk)
+
+Get all available players/symbols for search and listing.
+
+**Endpoint**: `GET /api/symbols/all`
+
+**Response**: Array of symbol info objects
+```typescript
+[
+  {
+    "symbol_id": 764,
+    "name": "Josh Allen",
+    "position": "QB",
+    "team": "BUF",
+    "projected_points": 24.5,
+    "last_updated": "2025-01-26T10:30:00.000Z"
+  },
+  // ... all 467 players
+]
+```
+
+**Example**:
+```bash
+curl "http://localhost:8083/api/symbols/all"
+```
+
+### 7. Current Price (Single Symbol)
+
+Get the current price for a specific symbol. Checks fair prices (RPE engine) first, then price history, then falls back to a default.
+
+**Endpoint**: `GET /api/symbol/{symbol_id}/price`
+
+**Response**:
+```typescript
+{
+  "symbol_id": 764,
+  "price": 3500,             // Price in cents ($35.00)
+  "source": "fair_price",    // "fair_price", "price_history", or "default"
+  "last_updated": "2025-01-26T10:30:00.000Z"
+}
+```
+
+**Example**:
+```bash
+curl "http://localhost:8083/api/symbol/764/price"
+```
+
+### 8. Bulk Prices
+
+Get current prices for all symbols in a single request. Prices come from the RPE fair price engine.
+
+**Endpoint**: `GET /api/symbols/prices`
+
+**Response**:
+```typescript
+{
+  "prices": {
+    "764": 3500,    // symbol_id -> price in cents
+    "765": 2800,
+    "766": 4200
+    // ... all symbols with fair prices
+  },
+  "last_updated": "2025-01-26T10:30:00.000Z"
+}
+```
+
+**Example**:
+```bash
+curl "http://localhost:8083/api/symbols/prices"
+```
+
+### 9. Health Check
+
+Check if the REST API server is healthy.
+
+**Endpoint**: `GET /health`
+
+**Response**:
+```typescript
+{
+  "status": "healthy",
+  "timestamp": "2025-01-26T10:30:00.000Z"
+}
 ```
 
 ---

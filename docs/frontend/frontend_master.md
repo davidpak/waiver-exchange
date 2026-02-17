@@ -2,10 +2,19 @@
 # Waiver Exchange — Frontend Master Specification (v0.1)
 
 **Owner:** David Pak
-**Status:** Draft → Accept upon review  
-**Scope:** Full architecture, invariants, SLAs, and feature contracts for the Waiver Exchange WebUI.  
-**Audience:** Frontend engineers, system architects, reviewers. This is the **source of truth** for UI.  
-**Normative language:** MUST / SHOULD / MAY  
+**Status:** Draft → Accept upon review
+**Scope:** Full architecture, invariants, SLAs, and feature contracts for the Waiver Exchange WebUI.
+**Audience:** Frontend engineers, system architects, reviewers. This is the **source of truth** for UI.
+**Normative language:** MUST / SHOULD / MAY
+
+> **Implementation Status (February 2026):** This document was written as a design vision before
+> implementation began. The actual frontend uses **Next.js 15 + React 19** (not create-react-app +
+> React 18), **Mantine 8** for all UI (not TradingView Lightweight Charts — the `lightweight-charts`
+> and `react-grid-layout` dependencies were never added). The current frontend has basic
+> AccountSummary, SymbolView, MarketPage, and TradingLayout components implemented with REST API
+> polling, but charts, order placement, and the order book widget are not yet built. Sections 7, 16,
+> 17.4, and 18 reference libraries/setup that do not match the current codebase. Treat this document
+> as a **target specification** rather than a description of what exists today.
 
 ---
 
@@ -43,15 +52,15 @@ The frontend is not a toy; it is an **engineering showcase** equal to the backen
 
 ## 3. Tech Stack
 
-- **React 18 + TypeScript**
-- **Mantine** (AppShell, Grid, Modal, Notifications, Spotlight, Drawer)
-- **State:** Zustand (domain slices) + TanStack Query (server state)  
-- **Data transport:** REST API (primary), WebSocket (real-time updates), HTTP (snapshots/mutations)  
-- **Tables:** TanStack Table + react-virtuoso (virtualization)  
-- **Charts:** TradingView Lightweight Charts (canvas) - Professional trading charts with real-time updates  
-- **Layout:** react-grid-layout (MVP), Golden Layout (future pro mode)  
-- **Testing:** Vitest, Playwright, Storybook, Chromatic  
-- **Perf tooling:** React Profiler, Web Vitals beacons, custom tick-trace overlay  
+- **Next.js 15 + React 19 + TypeScript** (App Router with Turbopack)
+- **Mantine 8** (AppShell, Grid, Modal, Notifications, and full component library)
+- **State:** Zustand (auth state) + TanStack React Query (server state with 1s polling)
+- **Data transport:** REST API (primary), WebSocket (real-time updates planned)
+- **Animations:** Framer Motion
+- **Charts:** TBD (TradingView Lightweight Charts was originally planned but not yet added)
+- **Layout:** Mantine layout primitives (react-grid-layout was originally planned but not yet added)
+- **Testing:** TBD (Vitest, Playwright planned)
+- **Perf tooling:** TBD
 
 ---
 
@@ -614,20 +623,15 @@ wscat -c ws://localhost:8081/ws
 
 **4. Frontend Setup:**
 ```bash
-# Create React app
-npx create-react-app waiver-exchange-frontend --template typescript
 cd waiver-exchange-frontend
-
-# Install dependencies
-npm install @mantine/core @mantine/hooks @mantine/notifications
-npm install @tanstack/react-query zustand
-npm install lightweight-charts react-grid-layout
-npm install @types/react-grid-layout
-npm install ws @types/ws  # For WebSocket support
-
-# TradingView Lightweight Charts (already included above)
-# npm install --save lightweight-charts
+npm install
+npm run dev
+# Frontend runs on http://localhost:3000
 ```
+
+> **Note:** The frontend is a Next.js 15 app (not create-react-app). See `package.json` for the
+> current dependency list. Key dependencies: `@mantine/core`, `@tanstack/react-query`, `zustand`,
+> `framer-motion`.
 
 **5. Key Implementation Notes:**
 - **All prices in cents** - Convert to dollars for display (divide by 100)

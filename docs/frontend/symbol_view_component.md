@@ -1,9 +1,17 @@
 # Symbol View Component Specification
 
-**Owner:** David Pak  
-**Status:** Draft → Accept upon review  
-**Scope:** Central trading widget for fantasy football player trading  
-**Audience:** Frontend engineers, UI/UX designers, system architects  
+**Owner:** David Pak
+**Status:** Draft → Accept upon review
+**Scope:** Central trading widget for fantasy football player trading
+**Audience:** Frontend engineers, UI/UX designers, system architects
+
+> **Implementation Status (February 2026):** A basic SymbolView component exists at
+> `src/components/trading/SymbolView.tsx` that displays player info (name, position, team) and
+> current price from REST API polling. However, candlestick charts (TradingView Lightweight Charts
+> was never added), the order modal, order book integration, and most interactive features described
+> here are **not yet implemented**. The current component uses Mantine UI components and fetches
+> data via TanStack React Query with 1-second polling. Treat this document as a **target
+> specification** for the full SymbolView widget.
 
 ---
 

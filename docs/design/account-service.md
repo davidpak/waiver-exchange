@@ -1,3 +1,7 @@
+> **Implementation Status:** Fully implemented. Account management, Google OAuth, Sleeper integration, balance tracking, position management, trade settlement, and reservation system all working. Redis is configured but token storage uses PostgreSQL. Weekly win bonus logic is simplified compared to this spec.
+
+---
+
 # AccountService Design Document
 
 ## 1. Overview

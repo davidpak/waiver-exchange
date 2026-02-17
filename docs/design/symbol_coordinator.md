@@ -1,3 +1,7 @@
+> **Implementation Status:** Partially implemented. Core lifecycle management interfaces and symbol registry exist. Thread placement policy and NUMA-aware memory allocation are not yet implemented. Whistle instance creation and queue wiring are handled through simplified paths.
+
+---
+
 # SymbolCoordinator Design Document
 
 ## 1. Overview

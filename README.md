@@ -1,342 +1,220 @@
-# Waiver Exchange
+# The Waiver Exchange
 
-A high-performance, production-ready fantasy sports trading platform built in Rust. The Waiver Exchange enables real-time trading of fantasy football players with fractional share support, comprehensive risk management, and full audit trails.
+A high-performance fantasy football trading platform built in Rust. Trade NFL players like stocks with real-time pricing, fractional share support, and a full order matching engine.
+
+## Architecture
+
+The system is composed of three layers: a Rust backend (17 crates), a Next.js frontend, and supporting data pipeline tools.
+
+### Backend Services
+
+| Service | Binary | Port | Description |
+|---------|--------|------|-------------|
+| **Exchange Engine** | `waiver-exchange` | 8081 | Main service: matching engine, WebSocket API, order processing, settlement |
+| **OAuth Server** | `oauth-server` | 8082 | Google OAuth authentication server |
+| **REST API** | `rest-server` | 8083 | REST API for prices, account data, market snapshots |
+| **Market Maker** | `market-maker` | — | Automated liquidity provider using RPE fair prices |
+
+### Core Engine Crates
+
+| Crate | Purpose |
+|-------|---------|
+| `whistle` | Deterministic per-symbol order matching engine (FIFO price-time priority) |
+| `symbol-coordinator` | Per-symbol engine lifecycle management and thread placement |
+| `order-router` | Sharded order routing to symbol engines via SPSC queues |
+| `execution-manager` | Post-match event normalization, settlement, and dispatch |
+| `simulation-clock` | Tick-based system heartbeat driving time progression |
+| `persistence` | WAL + snapshot-based state persistence and recovery |
+
+### Service Crates
+
+| Crate | Purpose |
+|-------|---------|
+| `order-gateway` | WebSocket + REST API server (hosts `oauth-server` and `rest-server` binaries) |
+| `account-service` | User accounts, balances, positions, Google OAuth, Sleeper integration |
+| `equity-service` | Real-time equity calculation and P&L tracking |
+| `rpe-engine` | Reference Price Engine — Fair Price 2.3 algorithm for player valuations |
+| `market-maker` | Automated market making around fair prices |
+| `analytics-engine` | Event ingestion, metrics collection, CLI querying |
+
+### Data Pipeline Crates
+
+| Crate | Purpose |
+|-------|---------|
+| `player-registry` | NFL player to trading symbol mapping (deterministic hashing) |
+| `player-scraper` | Web scraper for NFL player data, leaderboards, weekly stats |
+| `sportsdataio-fetcher` | SportsDataIO API integration for player stats |
+
+### Frontend
+
+| Stack | Description |
+|-------|-------------|
+| Next.js 15 + React 19 | App framework with Turbopack |
+| Mantine 8 | UI component library |
+| Zustand | Auth state management |
+| TanStack React Query | Server state with polling |
+| Framer Motion | Animations |
+
+### Infrastructure
+
+| Component | Purpose |
+|-----------|---------|
+| PostgreSQL | Primary database (accounts, positions, trades, prices) |
+| Redis | Caching layer |
 
 ## Quick Start
 
 ### Prerequisites
 
-- **Rust** (latest stable)
-- **Docker** (for PostgreSQL and Redis)
-- **Node.js** (for player data scraping)
+- Rust (latest stable)
+- Node.js 18+
+- PostgreSQL 15+
+- Redis
 
-### 1. Clone and Build
+### 1. Build
 
 ```bash
-git clone <repository-url>
+git clone https://github.com/davidpak/waiver-exchange.git
 cd waiver-exchange
 cargo build --workspace
 ```
 
-### 2. Start Dependencies
+### 2. Database Setup
 
 ```bash
-# Start PostgreSQL database
-docker run -d --name waiver-exchange-db \
-  -e POSTGRES_PASSWORD=password \
-  -e POSTGRES_DB=waiver_exchange \
-  -p 5432:5432 \
-  postgres:15
-
-# Start Redis (for caching)
-docker run -d --name waiver-exchange-redis \
-  -p 6379:6379 \
-  redis:alpine
+# Start PostgreSQL and Redis (Docker or local install)
+docker run -d --name waiver-db -e POSTGRES_PASSWORD=password -e POSTGRES_DB=waiver_exchange -p 5432:5432 postgres:15
+docker run -d --name waiver-redis -p 6379:6379 redis:alpine
 ```
 
-### 3. Scrape Player Data
-
-```bash
-# Scrape current NFL player data and projections
-cargo run --bin scrape_players
-```
-
-### 4. Set Environment Variables
+### 3. Environment Variables
 
 ```bash
 export DATABASE_URL="postgresql://postgres:password@localhost:5432/waiver_exchange"
 export REDIS_URL="redis://localhost:6379"
-export GOOGLE_CLIENT_ID="your-google-client-id"
-export GOOGLE_CLIENT_SECRET="your-google-client-secret"
-export GOOGLE_REDIRECT_URL="http://localhost:3000/auth/callback"
+export GOOGLE_CLIENT_ID="your-client-id"
+export GOOGLE_CLIENT_SECRET="your-client-secret"
+export GOOGLE_REDIRECT_URL="http://localhost:8082/auth/callback"
 ```
 
-### 5. Run the Exchange
+### 4. Run Backend Services
 
 ```bash
+# Main exchange engine (port 8081)
 cargo run -p waiver-exchange-service
+
+# OAuth server (port 8082)
+cargo run -p order-gateway --bin oauth-server
+
+# REST API server (port 8083)
+cargo run -p order-gateway --bin rest-server
 ```
 
-The exchange will start on `http://localhost:8081` with WebSocket support.
+### 5. Run Frontend
 
-## Architecture
+```bash
+cd waiver-exchange-frontend
+npm install
+npm run dev
+# Frontend runs on http://localhost:3000
+```
 
-The Waiver Exchange is built as a modular, high-performance system with the following components:
+### 6. Data Pipeline (Optional)
 
-### Core Engine
-- **Whistle**: Ultra-fast matching engine with deterministic execution
-- **SymbolCoordinator**: Manages trading engines per symbol
-- **ExecutionManager**: Handles trade settlement and position updates
-- **OrderRouter**: Routes orders to appropriate symbol engines
+```bash
+# Scrape NFL player data
+cargo run -p player-scraper --bin scrape_players
+cargo run -p player-scraper --bin scrape_all_weeks
 
-### Services
-- **OrderGateway**: WebSocket API for order placement and market data
-- **AccountService**: User account management, balance tracking, and risk validation
-- **PlayerRegistry**: Maps player names to trading symbols
-- **Persistence**: WAL-based persistence with snapshot recovery
+# Fetch from SportsDataIO API
+cargo run -p sportsdataio-fetcher --bin populate-data
 
-### Data Layer
-- **PostgreSQL**: Primary database for accounts, positions, and trades
-- **Redis**: High-speed caching and session management
-- **File System**: WAL logs and snapshots for disaster recovery
+# Map players between data sources
+cargo run -p player-mapping-script
+```
 
-## System Features
-
-### Trading Features
-- **Fractional Shares**: Trade in 1/10000th precision (basis points)
-- **Order Types**: Limit, Market, IOC, Post-Only orders
-- **Real-time Matching**: Sub-millisecond order matching
-- **Position Tracking**: Automatic position updates after trades
-- **Risk Management**: Balance validation and position limits
-
-### Account Management
-- **Multi-Account Support**: Separate accounts per user
-- **Balance Tracking**: Real-time balance updates
-- **Reservation System**: Prevents overspending on pending orders
-- **Trade History**: Complete audit trail of all transactions
-
-### Data Management
-- **Player Data**: Automated scraping of NFL player projections
-- **Symbol Mapping**: Dynamic mapping of player names to symbols
-- **Snapshot Recovery**: Fast startup from persistent snapshots
-- **WAL Logging**: Complete transaction log for recovery
-
-## Development
-
-### Project Structure
+## Project Structure
 
 ```
 waiver-exchange/
-├── engine/                    # Core trading engine components
-│   ├── whistle/              # Matching engine
-│   ├── symbol-coordinator/   # Symbol management
-│   ├── execution-manager/    # Trade settlement
-│   ├── order-router/         # Order routing
-│   ├── order-gateway/        # WebSocket API
-│   ├── account-service/      # Account management
-│   ├── player-registry/      # Player data
-│   ├── player-scraper/       # Data scraping
-│   ├── persistence/          # Data persistence
-│   └── simulation-clock/     # Time management
-├── tools/                    # Development and testing tools
-│   └── integration-test/     # End-to-end testing
-├── data/                     # Runtime data
-│   ├── players/              # Player data files
-│   └── snapshots/            # System snapshots
-└── test_gateway.html         # WebSocket testing interface
+├── engine/                          # Rust backend (17 crates)
+│   ├── whistle/                     # Matching engine
+│   ├── whistle-bench/               # Performance benchmarks
+│   ├── symbol-coordinator/          # Symbol lifecycle management
+│   ├── order-router/                # Order routing
+│   ├── execution-manager/           # Trade settlement
+│   ├── simulation-clock/            # System heartbeat
+│   ├── persistence/                 # WAL + snapshots
+│   ├── order-gateway/               # WebSocket + REST + OAuth APIs
+│   ├── account-service/             # User accounts and auth
+│   ├── equity-service/              # Equity calculations
+│   ├── rpe-engine/                  # Fair price algorithm
+│   ├── market-maker/                # Automated market making
+│   ├── analytics-engine/            # Metrics and observability
+│   ├── player-registry/             # Player-symbol mapping
+│   ├── player-scraper/              # NFL data scraping
+│   ├── sportsdataio-fetcher/        # SportsDataIO integration
+│   └── waiver-exchange-service/     # Main orchestrator binary
+├── waiver-exchange-frontend/        # Next.js frontend
+├── tools/
+│   ├── admin-cli/                   # Administrative CLI
+│   └── player-mapping-script/       # Player data mapping utility
+├── scripts/
+│   └── linux/                       # Linux deployment scripts
+├── docs/                            # Documentation
+│   ├── design/                      # System design documents
+│   ├── adr/                         # Architecture Decision Records
+│   ├── api/                         # API documentation
+│   ├── backend/                     # Backend implementation docs
+│   ├── frontend/                    # Frontend documentation
+│   └── deployment/                  # Deployment guides
+└── data/                            # Runtime data (players, snapshots)
 ```
 
-### Building and Testing
+## Key Concepts
+
+### Trading Model
+- Each NFL player = one tradeable symbol (deterministic hash mapping)
+- Prices in **cents** (e.g., $50.00 = 5000)
+- Quantities in **basis points** (10,000 bp = 1 full share)
+- Order types: Limit, Market, IOC, Post-Only
+- Self-match prevention between same-account orders
+
+### Fair Pricing (RPE 2.3)
+- Baseline from season projections
+- Adjusted by NFL leaderboard rankings and weekly performance
+- 80% leaderboard score + 20% momentum (EMA of recent deltas)
+- Price bands: +/-30% of baseline
+
+### System Flow
+```
+User → OrderGateway (WebSocket) → OrderRouter → SymbolCoordinator → Whistle (matching)
+                                                                         ↓
+User ← MarketData Broadcast ← ExecutionManager ← AccountService (settlement)
+                                     ↓
+                              Persistence (WAL + snapshots)
+```
+
+## Development
 
 ```bash
-# Build everything
-cargo build --workspace
-
-# Run all tests
-cargo test --workspace
-
-# Format code
-cargo fmt --all
-
-# Lint code
-cargo clippy --workspace -- -D warnings
-
-# Run benchmarks
-cargo bench -p whistle-bench
+cargo build --workspace          # Build all crates
+cargo test --workspace           # Run all tests
+cargo fmt --all                  # Format code
+cargo clippy --workspace         # Lint
+cargo bench -p whistle-bench     # Run benchmarks
 ```
-
-### Code Quality
-
-The project enforces strict quality standards:
-
-- **Formatting**: All code must be formatted with `cargo fmt`
-- **Linting**: Zero warnings allowed with `cargo clippy`
-- **Testing**: All tests must pass
-- **Documentation**: Public APIs must be documented
-
-## Testing
-
-### Integration Testing
-
-```bash
-# Run the full integration test
-cargo run -p integration-test
-```
-
-This test:
-1. Creates test accounts in the database
-2. Validates account operations
-3. Tests order placement and execution
-4. Verifies position updates
-5. Tests reservation system
-
-### WebSocket Testing
-
-Open `test_gateway.html` in your browser to test the WebSocket API:
-
-1. **Connect**: Automatically connects to `ws://localhost:8081`
-2. **Authenticate**: Uses test API keys
-3. **Place Orders**: Submit buy/sell orders
-4. **View Responses**: See real-time order confirmations
-
-### Test Accounts
-
-The system includes pre-configured test accounts:
-
-- **User Account**: `ak_test_1234567890abcdef` / `sk_test_abcdef1234567890`
-- **Admin Account**: `ak_admin_abcdef1234567890` / `sk_admin_1234567890abcdef`
-
-## API Reference
-
-### WebSocket Connection
-
-Connect to: `ws://localhost:8081`
-
-### Authentication
-
-```json
-{
-  "method": "auth.login",
-  "params": {
-    "api_key": "ak_test_1234567890abcdef",
-    "api_secret": "sk_test_abcdef1234567890"
-  },
-  "id": "auth_001"
-}
-```
-
-### Order Placement
-
-```json
-{
-  "method": "order.place",
-  "params": {
-    "symbol": "Josh Allen",
-    "side": "BUY",
-    "type": "LIMIT",
-    "price": 5000,
-    "quantity": 100000,
-    "client_order_id": "my-order-1"
-  },
-  "id": "order_001"
-}
-```
-
-### Market Data Subscription
-
-```json
-{
-  "method": "market_data.subscribe",
-  "params": {
-    "symbols": ["Josh Allen", "Lamar Jackson"]
-  },
-  "id": "sub_001"
-}
-```
-
-## Security
-
-### Authentication
-- API key-based authentication
-- Session management with Redis
-- Rate limiting per user
-- Permission-based access control
-
-### Data Protection
-- All sensitive data encrypted at rest
-- Secure WebSocket connections
-- Input validation and sanitization
-- SQL injection prevention
-
-### Risk Management
-- Balance validation before order placement
-- Position limits enforcement
-- Reservation system prevents overspending
-- Complete audit trail
-
-## Performance
-
-### Benchmarks
-- **Order Matching**: < 1ms per order
-- **Throughput**: 100,000+ orders/second
-- **Latency**: Sub-millisecond order processing
-- **Memory**: Efficient memory usage with zero-copy operations
-
-### Scalability
-- Horizontal scaling support
-- Database connection pooling
-- Redis caching for high-frequency data
-- Asynchronous processing throughout
-
-## Deployment
-
-### Production Setup
-
-1. **Database**: Set up PostgreSQL cluster
-2. **Cache**: Configure Redis cluster
-3. **Load Balancer**: Set up WebSocket load balancing
-4. **Monitoring**: Configure logging and metrics
-5. **SSL**: Enable HTTPS/WSS for production
-
-### Environment Variables
-
-```bash
-# Database
-DATABASE_URL=postgresql://user:pass@host:port/db
-
-# Cache
-REDIS_URL=redis://host:port
-
-# OAuth (for production)
-GOOGLE_CLIENT_ID=your-client-id
-GOOGLE_CLIENT_SECRET=your-client-secret
-GOOGLE_REDIRECT_URL=https://yourdomain.com/auth/callback
-
-# Optional
-FANTASY_POINTS_CONVERSION_RATE=10
-RESERVATION_EXPIRY_DAYS=7
-CACHE_TTL_SECONDS=300
-```
-
-## Contributing
-
-### Development Workflow
-
-1. **Fork** the repository
-2. **Create** a feature branch: `git checkout -b feature/amazing-feature`
-3. **Make** your changes
-4. **Test** thoroughly: `cargo test --workspace`
-5. **Format** code: `cargo fmt --all`
-6. **Lint** code: `cargo clippy --workspace -- -D warnings`
-7. **Commit** changes: `git commit -m 'Add amazing feature'`
-8. **Push** to branch: `git push origin feature/amazing-feature`
-9. **Open** a Pull Request
-
-### Code Standards
-
-- Follow Rust naming conventions
-- Document all public APIs
-- Write tests for new functionality
-- Ensure zero clippy warnings
-- Maintain backward compatibility
 
 ## Documentation
 
-- **[Architecture Guide](docs/architecture.md)**: Detailed system architecture
-- **[API Documentation](docs/api.md)**: Complete API reference
-- **[Deployment Guide](docs/deployment.md)**: Production deployment
-- **[Contributing Guide](docs/contributing.md)**: Development guidelines
+- [System Design Master](docs/design/master.md) — Full architecture overview
+- [API Reference](docs/api/waiver-exchange-api-documentation.md) — REST + WebSocket API docs
+- [Architecture Decision Records](docs/adr/) — Key design decisions
+- [Development Guide](docs/DEVELOPMENT.md) — Contributing and code standards
+- [Deployment Guide](docs/deployment/production_deployment_plan.md) — Production setup
+- [Backend Implementation](docs/backend/) — Backend subsystem docs
+- [Frontend Guide](docs/frontend/frontend_master.md) — Frontend architecture
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Support
-
-- **Issues**: Report bugs and request features via GitHub Issues
-- **Discussions**: Join community discussions
-- **Documentation**: Check the docs/ directory for detailed guides
-
----
-
-**Built with Rust for high-performance fantasy sports trading**
+MIT

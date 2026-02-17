@@ -1,9 +1,13 @@
+> **Implementation Status:** Mostly implemented. REST API endpoints (symbol info, prices, price history, account summary, equity history, snapshots) are all working on port 8083. Database schema and caching are in place. Bot system and composite endpoints are not yet built. Code examples in this doc are illustrative — actual implementations may differ in detail.
+
+---
+
 # Backend API Implementation Guide
 
-**Owner**: Development Team  
-**Status**: Implementation Ready  
-**Scope**: Complete backend implementation for frontend API integration  
-**Audience**: Backend developers implementing REST APIs and data services  
+**Owner**: Development Team
+**Status**: Mostly Implemented
+**Scope**: Complete backend implementation for frontend API integration
+**Audience**: Backend developers implementing REST APIs and data services
 
 ## 1. Overview
 

@@ -1,3 +1,7 @@
+> **Implementation Status:** MVP phase. Event ingestion and in-memory aggregation are implemented. Storage is in-memory HashMap (not Parquet as described). Protobuf serialization is not used (plain Rust structs instead). CLI querying works. Parquet storage and SQL query support are planned.
+
+---
+
 ---
 title: "AnalyticsEngine Design Document"
 description: "Comprehensive analytics and observability system for the Waiver Exchange"
