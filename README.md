@@ -5,6 +5,7 @@ A high-performance fantasy football trading platform built in Rust. Trade NFL pl
 ## Architecture
 
 The system is composed of three layers: a Rust backend (17 crates), a Next.js frontend, and supporting data pipeline tools.
+<img width="3215" height="1970" alt="The Waiver Exchange - Architecture" src="https://github.com/user-attachments/assets/5db43598-b0c0-4944-9065-71384e06e57e" />
 
 ### Backend Services
 
