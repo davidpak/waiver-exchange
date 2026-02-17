@@ -3,17 +3,19 @@
 import { AccountInfoPopover } from '@/components/auth/AccountInfoPopover';
 import { AnimatedButton } from '@/components/ui/AnimatedButton';
 import { NavigationButton } from '@/components/ui/NavigationButton';
+import { useNavigation } from '@/contexts/NavigationContext';
 import { useCustomTheme } from '@/hooks/useCustomTheme';
 import { useAuthStore } from '@/stores/authStore';
 import { AppShell, Avatar, Badge, Box, Burger, Drawer, Group, NavLink, Text, ThemeIcon } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
 import { IconBell, IconDashboard, IconList, IconMoon, IconSettings, IconSun, IconUser } from '@tabler/icons-react';
 import { useRouter } from 'next/navigation';
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 
 interface HeaderProps {
   onNavigate?: (route: string) => void;
   onToggleTheme?: () => void;
+  currentRoute?: string;
 }
 
 /**
@@ -22,13 +24,17 @@ interface HeaderProps {
  */
 function Header({ 
   onNavigate,
-  onToggleTheme 
+  onToggleTheme,
+  currentRoute
 }: HeaderProps) {
   const { theme, toggleTheme, isDark } = useCustomTheme();
   const [opened, { toggle, close }] = useDisclosure(false);
-  const [activeRoute, setActiveRoute] = useState('dashboard');
+  const { currentRoute: navCurrentRoute, navigate, isNavigating } = useNavigation();
   const { isAuthenticated } = useAuthStore();
   const router = useRouter();
+  
+  // Use navigation context route or fallback to prop
+  const activeRoute = navCurrentRoute || currentRoute || 'dashboard';
 
   const handleThemeToggle = () => {
     toggleTheme();
@@ -36,21 +42,12 @@ function Header({
   };
 
   const handleNavigation = useCallback((route: string) => {
-    // Use requestAnimationFrame to defer state update until after current render
-    requestAnimationFrame(() => {
-      setActiveRoute(route);
-    });
-    
-    // Handle special routes
-    if (route === 'login' || route === 'signup') {
-      router.push('/login');
-      close();
-      return;
-    }
-    
+    // Always use NavigationContext if available
+    navigate(route);
+    // Also call the prop for backward compatibility
     onNavigate?.(route);
     close(); // Close mobile drawer after navigation
-  }, [onNavigate, close, router]);
+  }, [navigate, onNavigate, close]);
   
   // Memoize the navigation buttons to prevent re-renders
   const navigationButtons = useMemo(() => (

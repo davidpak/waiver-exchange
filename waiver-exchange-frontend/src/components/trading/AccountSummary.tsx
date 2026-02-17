@@ -24,7 +24,6 @@ import {
 } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import React from 'react';
-import { EquityChart } from './EquityChart';
 
 // Design system colors - now using CSS variables
 const COLORS = {
@@ -178,9 +177,7 @@ export function AccountSummary({ accountId, className, style }: AccountSummaryPr
         {/* Content Area - No internal scrolling */}
         <Stack gap="md" style={{ flex: 1 }}>
             {/* Equity Chart */}
-            <Stack gap="xs">
-              <EquityChart accountId={currentAccountId} />
-            </Stack>
+            {/* Chart removed - will be replaced with custom implementation */}
 
             {/* Profit & Loss Section */}
             <Stack gap="xs">

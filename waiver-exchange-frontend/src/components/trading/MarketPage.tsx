@@ -2,32 +2,34 @@
 
 import { apiClient } from '@/lib/api-client';
 import type {
-    SymbolInfoResponse
+  SymbolInfoResponse
 } from '@/types/api';
+import { getTeamLogoWithFallback } from '@/utils/teamLogos';
 import {
-    Badge,
-    Box,
-    Card,
-    Group,
-    Pagination,
-    ScrollArea,
-    Skeleton,
-    Stack,
-    Table,
-    Text,
-    TextInput,
-    ThemeIcon,
-    UnstyledButton,
+  Badge,
+  Box,
+  Card,
+  Group,
+  Pagination,
+  ScrollArea,
+  Skeleton,
+  Stack,
+  Table,
+  Text,
+  TextInput,
+  ThemeIcon,
+  UnstyledButton,
 } from '@mantine/core';
 import {
-    IconArrowDown,
-    IconArrowUp,
-    IconSearch,
-    IconTrendingDown,
-    IconTrendingUp,
+  IconArrowDown,
+  IconArrowUp,
+  IconSearch,
+  IconTrendingDown,
+  IconTrendingUp,
 } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { useMemo, useState } from 'react';
+import { PreviewCards } from './PreviewCards';
 
 // Design system colors - matching existing components
 const COLORS = {
@@ -282,32 +284,46 @@ export function MarketPage({ onSymbolSelect, className, style }: MarketPageProps
   if (!allPlayers) return null;
 
   return (
-    <Card
+    <div
       className={className}
       style={{
         ...style,
-        backgroundColor: 'var(--card-bg)',
-        border: '1px solid var(--border-primary)',
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
+        maxWidth: '900px',
+        margin: '0 auto',
+        width: '100%',
       }}
-      padding="lg"
-      radius="md"
-      withBorder
     >
-      <Stack gap="md" style={{ height: '100%' }}>
-        {/* Header */}
-        <Stack gap="xs">
-          <Text size="xl" fw={600} style={{ color: 'var(--text-primary)' }}>
-            Market Overview
-          </Text>
-          <Text size="sm" c="dimmed">
-            {sortedPlayers.length} players • Real-time prices
-          </Text>
-        </Stack>
+      {/* Header - Outside the card */}
+      <Stack gap="xs" style={{ marginBottom: '20px' }}>
+        <Text size="xl" fw={600} style={{ color: 'var(--text-primary)' }}>
+          Market Overview
+        </Text>
+        <Text size="sm" c="dimmed">
+          {sortedPlayers.length} players • Real-time prices
+        </Text>
+      </Stack>
 
-        {/* Search */}
+      {/* Preview Cards */}
+      <PreviewCards 
+        allPlayers={sortedPlayers || []} 
+        allPrices={bulkPricesData || []} 
+        isLoading={playersLoading || pricesLoading}
+      />
+
+      <Card
+        style={{
+          backgroundColor: 'var(--site-bg)',
+          border: '1px solid var(--border-primary)',
+          height: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+        }}
+        padding="lg"
+        radius="md"
+        withBorder
+      >
+        <Stack gap="md" style={{ height: '100%' }}>
+          {/* Search */}
         <TextInput
           placeholder="Search players by name, position, or team..."
           value={searchQuery}
@@ -321,35 +337,31 @@ export function MarketPage({ onSymbolSelect, className, style }: MarketPageProps
         <Box style={{ flex: 1, minHeight: 0 }}>
           <ScrollArea style={{ height: '100%' }}>
             <Table
-              striped
-              highlightOnHover
-              withTableBorder
-              withColumnBorders
               style={{
                 backgroundColor: 'var(--mantine-color-body)',
+                fontSize: '16px',
+                borderCollapse: 'separate',
+                borderSpacing: '0',
               }}
             >
               <Table.Thead>
                 <Table.Tr>
-                  <Table.Th>
-                    <SortButton field="rank">#</SortButton>
-                  </Table.Th>
-                  <Table.Th>
+                  <Table.Th style={{ padding: '8px 12px', fontSize: '14px', fontWeight: 500, color: 'var(--text-muted)' }}>
                     <SortButton field="name">Player</SortButton>
                   </Table.Th>
-                  <Table.Th>
+                  <Table.Th style={{ padding: '8px 12px', fontSize: '14px', fontWeight: 500, color: 'var(--text-muted)' }}>
                     <SortButton field="position">Pos</SortButton>
                   </Table.Th>
-                  <Table.Th>
+                  <Table.Th style={{ padding: '8px 12px', fontSize: '14px', fontWeight: 500, color: 'var(--text-muted)' }}>
                     <SortButton field="team">Team</SortButton>
                   </Table.Th>
-                  <Table.Th>
+                  <Table.Th style={{ padding: '8px 12px', fontSize: '14px', fontWeight: 500, color: 'var(--text-muted)' }}>
                     <SortButton field="price">Price</SortButton>
                   </Table.Th>
-                  <Table.Th>
+                  <Table.Th style={{ padding: '8px 12px', fontSize: '14px', fontWeight: 500, color: 'var(--text-muted)' }}>
                     <SortButton field="change">24h Change</SortButton>
                   </Table.Th>
-                  <Table.Th>Projected</Table.Th>
+                  <Table.Th style={{ padding: '8px 12px', fontSize: '14px', fontWeight: 500, color: 'var(--text-muted)' }}>Projected</Table.Th>
                 </Table.Tr>
               </Table.Thead>
               <Table.Tbody>
@@ -373,46 +385,58 @@ export function MarketPage({ onSymbolSelect, className, style }: MarketPageProps
                       }}
                       onClick={() => handleSymbolClick(player.symbol_id)}
                     >
-                      <Table.Td>
-                        <Text size="sm" c="dimmed">
-                          #{player.rank}
-                        </Text>
+                      <Table.Td style={{ padding: '16px 12px' }}>
+                        <Group gap="xs" align="center">
+                          <img
+                            src={getTeamLogoWithFallback(player.team)}
+                            alt={`${player.team} logo`}
+                            style={{
+                              width: '28px',
+                              height: '28px',
+                              objectFit: 'contain',
+                              borderRadius: '2px',
+                              flexShrink: 0
+                            }}
+                            onError={(e) => {
+                              // Fallback to placeholder if logo fails to load
+                              e.currentTarget.src = '/src/assets/placeholder-logo.jpg';
+                            }}
+                          />
+                          <Text size="md" fw={500} style={{ color: 'var(--text-primary)' }}>
+                            {player.name}
+                          </Text>
+                        </Group>
                       </Table.Td>
-                      <Table.Td>
-                        <Text size="sm" fw={500} style={{ color: 'var(--text-primary)' }}>
-                          {player.name}
-                        </Text>
-                      </Table.Td>
-                      <Table.Td>
-                        <Badge variant="light" color="blue" size="sm">
+                      <Table.Td style={{ padding: '16px 12px' }}>
+                        <Badge variant="light" color="blue" size="md">
                           {player.position}
                         </Badge>
                       </Table.Td>
-                      <Table.Td>
-                        <Badge variant="light" color="gray" size="sm">
+                      <Table.Td style={{ padding: '16px 12px' }}>
+                        <Badge variant="light" color="gray" size="md">
                           {player.team}
                         </Badge>
                       </Table.Td>
-                      <Table.Td>
-                        <Text size="sm" fw={500} style={{ color: 'var(--text-primary)' }}>
+                      <Table.Td style={{ padding: '16px 12px' }}>
+                        <Text size="md" fw={500} style={{ color: 'var(--text-primary)' }}>
                           {formatCurrency(currentPrice)}
                         </Text>
                       </Table.Td>
-                      <Table.Td>
+                      <Table.Td style={{ padding: '16px 12px' }}>
                         <Group gap="xs" align="center">
                           {ChangeIcon && (
                             <ChangeIcon
-                              size={14}
+                              size={16}
                               color={getChangeColor(priceChange)}
                             />
                           )}
-                          <Text size="sm" c={getChangeColor(priceChange)}>
+                          <Text size="md" c={getChangeColor(priceChange)}>
                             {formatPercentage(priceChange || 0)}
                           </Text>
                         </Group>
                       </Table.Td>
-                      <Table.Td>
-                        <Text size="sm" c="dimmed">
+                      <Table.Td style={{ padding: '16px 12px' }}>
+                        <Text size="md" c="dimmed">
                           {player.projected_points.toFixed(1)} pts
                         </Text>
                       </Table.Td>
@@ -426,12 +450,13 @@ export function MarketPage({ onSymbolSelect, className, style }: MarketPageProps
 
         {/* Pagination */}
         {totalPages > 1 && (
-          <Group justify="center">
+          <Group justify="end">
             <Pagination
               value={currentPage}
               onChange={setCurrentPage}
               total={totalPages}
               size="sm"
+              radius="sm"
               withEdges
             />
           </Group>
@@ -442,7 +467,24 @@ export function MarketPage({ onSymbolSelect, className, style }: MarketPageProps
           Showing {paginatedPlayers.length} of {sortedPlayers.length} players
           {searchQuery && ` matching "${searchQuery}"`}
         </Text>
-      </Stack>
-    </Card>
+        </Stack>
+      </Card>
+
+      {/* Footer for bottom spacing */}
+      <div style={{ 
+        marginTop: '40px', 
+        padding: '20px 0 40px 0', 
+        textAlign: 'center',
+        borderTop: '1px solid var(--border-primary)',
+        color: 'var(--text-muted)'
+      }}>
+        <Text size="sm">
+          Waiver Exchange • Real-time Fantasy Football Trading
+        </Text>
+        <Text size="xs" style={{ marginTop: '8px' }}>
+          © 2025 Waiver Exchange. All rights reserved.
+        </Text>
+      </div>
+    </div>
   );
 }

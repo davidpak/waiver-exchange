@@ -1,4 +1,6 @@
+import { NavigationLoader } from '@/components/common/NavigationLoader';
 import { QueryProvider } from '@/components/providers/QueryProvider';
+import { NavigationProvider } from '@/contexts/NavigationContext';
 import { tradingTheme } from '@/styles/theme';
 import { ColorSchemeScript, MantineProvider } from '@mantine/core';
 import '@mantine/core/styles.css';
@@ -41,7 +43,10 @@ export default function RootLayout({
           defaultColorScheme="dark"
         >
           <QueryProvider>
-            {children}
+            <NavigationProvider>
+              {children}
+              <NavigationLoader />
+            </NavigationProvider>
           </QueryProvider>
         </MantineProvider>
       </body>

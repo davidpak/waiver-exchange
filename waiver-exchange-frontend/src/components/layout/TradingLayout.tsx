@@ -1,10 +1,10 @@
 'use client';
 
+import { useNavigation } from '@/contexts/NavigationContext';
 import { useAutoAnimate } from '@/hooks/useAutoAnimate';
 import { AppShell, Box, Stack, Tabs, Text, useMantineTheme } from '@mantine/core';
 import { useState } from 'react';
 import { AccountSummary } from '../trading/AccountSummary';
-import { MarketPage } from '../trading/MarketPage';
 import { SymbolView } from '../trading/SymbolView';
 import { Header } from './Header';
 
@@ -24,12 +24,13 @@ export function TradingLayout({
   const [animateRef] = useAutoAnimate();
   const [activeTab, setActiveTab] = useState<string>('symbol');
   const [selectedSymbolId, setSelectedSymbolId] = useState<number>(764); // Default to Josh Allen
-  const [currentRoute, setCurrentRoute] = useState<string>('dashboard');
+  const { currentRoute, navigate, isNavigating } = useNavigation();
   const theme = useMantineTheme();
 
   // Handle navigation from header
   const handleNavigation = (route: string) => {
-    setCurrentRoute(route);
+    navigate(route);
+    // Also call the prop for backward compatibility
     onNavigate?.(route);
   };
 
@@ -55,16 +56,7 @@ export function TradingLayout({
 
       <AppShell.Main ref={animateRef} p="md" style={{ height: '100%' }}>
         {/* Route-based rendering */}
-        {currentRoute === 'market' ? (
-          /* Market Page - Full Width */
-          <Box style={{ height: '100%' }}>
-            <MarketPage 
-              onSymbolSelect={setSelectedSymbolId}
-              style={{ height: '100%' }}
-            />
-          </Box>
-        ) : (
-          /* Desktop Layout - CSS Grid */
+        {/* Desktop Layout - CSS Grid */}
           <Box visibleFrom="md" style={{ 
             height: '100%',
             display: 'grid',
@@ -158,7 +150,6 @@ export function TradingLayout({
             </div>
           </div>
           </Box>
-        )}
 
         {/* Mobile Layout - Tabs */}
         <Box hiddenFrom="md" style={{ height: '100%' }}>
@@ -219,20 +210,28 @@ export function TradingLayout({
             </Tabs.Panel>
 
             <Tabs.Panel value="market" pt="md" style={{ height: '100%' }}>
-              <div 
-                className="hide-scrollbar"
-                style={{ 
-                  minHeight: 0, // Critical for proper overflow behavior
-                  overflow: 'auto', // Allow scrolling if content overflows
-                  height: '100%', // Ensure the container takes full height
-                  scrollbarWidth: 'none', // Firefox
-                  msOverflowStyle: 'none', // IE/Edge
-                }}
-              >
-                <MarketPage 
-                  onSymbolSelect={setSelectedSymbolId}
-                  style={{ minHeight: '100%' }} 
-                />
+              <div style={{ 
+                height: '100%', 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                flexDirection: 'column',
+                gap: '20px'
+              }}>
+                <Text size="lg" c="dimmed" ta="center">
+                  Market Overview has moved to its own page
+                </Text>
+                <a 
+                  href="/market" 
+                  style={{ 
+                    color: 'var(--text-primary)', 
+                    textDecoration: 'underline',
+                    fontSize: '16px',
+                    fontWeight: 500
+                  }}
+                >
+                  Go to Market Overview →
+                </a>
               </div>
             </Tabs.Panel>
 

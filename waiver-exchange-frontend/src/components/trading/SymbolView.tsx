@@ -3,33 +3,33 @@
 
 import { apiClient } from '@/lib/api-client';
 import type {
-    AccountSummaryResponse,
-    PriceHistoryResponse,
-    SnapshotResponse,
-    SymbolInfoResponse,
-    Timeframe
+  AccountSummaryResponse,
+  PriceHistoryResponse,
+  SnapshotResponse,
+  SymbolInfoResponse,
+  Timeframe
 } from '@/types/api';
 import {
-    Alert,
-    Badge,
-    Box,
-    Button,
-    Card,
-    Group,
-    Modal,
-    ScrollArea,
-    Skeleton,
-    Stack,
-    Text,
-    TextInput,
-    ThemeIcon
+  Alert,
+  Badge,
+  Box,
+  Button,
+  Card,
+  Group,
+  Modal,
+  ScrollArea,
+  Skeleton,
+  Stack,
+  Text,
+  TextInput,
+  ThemeIcon
 } from '@mantine/core';
 import {
-    IconAlertCircle,
-    IconChartLine,
-    IconSearch,
-    IconTrendingDown,
-    IconTrendingUp
+  IconAlertCircle,
+  IconChartLine,
+  IconSearch,
+  IconTrendingDown,
+  IconTrendingUp
 } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import React, { useEffect, useMemo, useState } from 'react';
@@ -156,8 +156,8 @@ export function SymbolView({ symbolId, onSymbolChange, className, style }: Symbo
   });
 
   // Calculate current price with fallback
-  const currentPrice = snapshot?.state.order_books[symbolId.toString()]?.last_trade_price || 
-                      bulkPricesData?.prices[symbolId.toString()] || 
+  const currentPrice = snapshot?.state?.order_books?.[symbolId.toString()]?.last_trade_price || 
+                      bulkPricesData?.prices?.[symbolId.toString()] || 
                       null;
   const dayChange = React.useMemo(() => {
     // Try to get day change from price history
