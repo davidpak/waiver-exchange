@@ -1,85 +1,95 @@
+/* Waiver Exchange — supplements Mantine dark theme */
 
-/* Custom Theme System - Light Mode (Default) */
 :root {
-  /* Site Background */
-  --site-bg: #ffffff;
-  --site-bg-secondary: #f8f9fa;
-  
-  /* Card Backgrounds */
-  --card-bg: #ffffff;
-  --card-bg-secondary: #f1f3f4;
-  
-  /* Text Colors */
-  --text-primary: #1a1a1a;
-  --text-secondary: #4a4a4a;
-  --text-muted: #6b7280;
-  --text-bright: #ffffff;
-  
-  /* Borders */
-  --border-primary: #e5e7eb;
-  --border-secondary: #d1d5db;
-  
-  /* Hover States */
-  --hover-bg: #f3f4f6;
-  
-  /* Trading Colors */
-  --profit-color: #00ca40;
-  --loss-color: #f21616;
-  --neutral-color: #6b7280;
+  /* Trading colors */
+  --color-profit: #0ECB81;
+  --color-loss: #F6465D;
+  --color-profit-bg: rgba(14, 203, 129, 0.08);
+  --color-loss-bg: rgba(246, 70, 93, 0.08);
+  --color-profit-text: #0ECB81;
+  --color-loss-text: #F6465D;
+
+  /* Border system — translucent for depth */
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-default: rgba(255, 255, 255, 0.10);
+  --border-strong: rgba(255, 255, 255, 0.15);
+
+  /* Font family CSS variables (consumed by Mantine theme config) */
+  /* --font-mono is set by next/font Inter via className on <html> */
+  --font-mono: 'Inter', system-ui, -apple-system, sans-serif;
 }
 
-/* Custom Theme System - Dark Mode */
-[data-theme="dark"] {
-  /* Site Background */
-  --site-bg: #181818;
-  --site-bg-secondary: #1a1a1a;
-  
-  /* Card Backgrounds */
-  --card-bg: #141414;
-  --card-bg-secondary: #2a2a2a;
-  
-  /* Text Colors - Much Brighter */
-  --text-primary: #ffffff;
-  --text-secondary: #e5e5e5;
-  --text-muted: #a3a3a3;
-  --text-bright: #ffffff;
-  
-  /* Borders */
-  --border-primary: #404040;
-  --border-secondary: #525252;
-  
-  /* Hover States */
-  --hover-bg: #2a2a2a;
-  
-  /* Trading Colors */
-  --profit-color: #00ca40;
-  --loss-color: #f21616;
-  --neutral-color: #a3a3a3;
-}
-
-@theme inline {
-  --color-background: var(--site-bg);
-  --color-foreground: var(--text-primary);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+html, body {
+  overflow: hidden;
+  height: 100vh;
 }
 
 body {
-  background: var(--site-bg);
-  color: var(--text-primary);
-  font-family: Arial, Helvetica, sans-serif;
-  transition: background-color 0.2s ease, color 0.2s ease;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
 
-/* Hide scrollbar while keeping scroll functionality */
+/* Scrollbar — thin, unobtrusive */
+::-webkit-scrollbar {
+  width: 5px;
+  height: 5px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
 .hide-scrollbar {
-  /* Firefox */
   scrollbar-width: none;
-  /* IE and Edge */
   -ms-overflow-style: none;
 }
-
 .hide-scrollbar::-webkit-scrollbar {
-  /* Chrome, Safari, and Opera */
   display: none;
+}
+
+/* Monospace — all prices, numbers, quantities */
+.mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Price flash animations */
+@keyframes flash-green {
+  0% { background-color: rgba(14, 203, 129, 0.15); }
+  100% { background-color: transparent; }
+}
+@keyframes flash-red {
+  0% { background-color: rgba(246, 70, 93, 0.15); }
+  100% { background-color: transparent; }
+}
+.price-flash-up {
+  animation: flash-green 300ms ease-out;
+}
+.price-flash-down {
+  animation: flash-red 300ms ease-out;
+}
+
+/* Ticker marquee animation */
+@keyframes ticker-scroll {
+  0% { transform: translateX(0); }
+  100% { transform: translateX(-50%); }
+}
+
+/* Selection color — gold accent */
+::selection {
+  background: rgba(240, 185, 11, 0.3);
+}
+
+/* Focus ring — accessible but subtle */
+*:focus-visible {
+  outline: none;
+  box-shadow:
+    0 0 0 2px var(--mantine-color-dark-6),
+    0 0 0 4px rgba(240, 185, 11, 0.4);
 }

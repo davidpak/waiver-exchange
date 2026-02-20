@@ -145,8 +145,10 @@ impl ServiceState {
         // Initialize PlayerRegistry
         info!("Initializing PlayerRegistry...");
         let mut player_registry = PlayerRegistry::new();
+        let player_data_path = config.service.data_dir.join("players/season_projections_2025.json");
+        info!("Loading player data from: {:?}", player_data_path);
         player_registry
-            .load_from_file("data/players/season_projections_2025.json")
+            .load_from_file(&player_data_path)
             .await
             .map_err(|e| anyhow::anyhow!("Failed to load player data: {}", e))?;
         info!("PlayerRegistry loaded with {} players", player_registry.symbol_count());

@@ -16,10 +16,6 @@ interface State {
   errorInfo?: ErrorInfo;
 }
 
-/**
- * Professional error boundary component with smooth animations
- * Provides graceful error handling throughout the trading platform
- */
 export class ErrorBoundary extends Component<Props, State> {
   constructor(props: Props) {
     super(props);
@@ -31,12 +27,7 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
-    this.setState({
-      error,
-      errorInfo
-    });
-
-    // Log error to monitoring service in production
+    this.setState({ error, errorInfo });
     console.error('ErrorBoundary caught an error:', error, errorInfo);
   }
 
@@ -46,15 +37,13 @@ export class ErrorBoundary extends Component<Props, State> {
 
   render() {
     if (this.state.hasError) {
-      if (this.props.fallback) {
-        return this.props.fallback;
-      }
+      if (this.props.fallback) return this.props.fallback;
 
       return (
         <motion.div
           initial={{ opacity: 0, scale: 0.95 }}
           animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.3, ease: [0.4, 0, 0.2, 1] }}
+          transition={{ duration: 0.3 }}
         >
           <Card
             shadow="lg"
@@ -64,13 +53,12 @@ export class ErrorBoundary extends Component<Props, State> {
             style={{
               maxWidth: 500,
               margin: '2rem auto',
-              backgroundColor: 'var(--mantine-color-body)',
-              borderColor: 'var(--mantine-color-red-6)',
+              borderColor: 'var(--color-loss)',
             }}
           >
             <Group mb="md">
-              <IconAlertCircle size={24} color="var(--mantine-color-red-6)" />
-              <Title order={3} c="red">
+              <IconAlertCircle size={24} color="var(--color-loss)" />
+              <Title order={3} style={{ color: 'var(--color-loss)' }}>
                 Something went wrong
               </Title>
             </Group>
@@ -80,19 +68,16 @@ export class ErrorBoundary extends Component<Props, State> {
             </Text>
 
             {process.env.NODE_ENV === 'development' && this.state.error && (
-              <Alert
-                color="red"
-                variant="light"
-                title="Error Details (Development)"
-                mb="lg"
-              >
-                <Text size="sm" style={{ fontFamily: 'monospace' }}>
+              <Alert color="red" variant="light" title="Error Details" mb="lg">
+                <Text size="sm" className="mono">
                   {this.state.error.message}
                 </Text>
                 {this.state.errorInfo && (
                   <details style={{ marginTop: '1rem' }}>
-                    <summary>Stack Trace</summary>
-                    <pre style={{ fontSize: '0.75rem', overflow: 'auto' }}>
+                    <summary style={{ cursor: 'pointer' }}>
+                      Stack Trace
+                    </summary>
+                    <pre style={{ fontSize: '0.7rem', overflow: 'auto' }}>
                       {this.state.errorInfo.componentStack}
                     </pre>
                   </details>
@@ -101,19 +86,13 @@ export class ErrorBoundary extends Component<Props, State> {
             )}
 
             <Group justify="center">
-              <motion.div
-                whileHover={{ scale: 1.05 }}
-                whileTap={{ scale: 0.95 }}
+              <Button
+                leftSection={<IconRefresh size={16} />}
+                onClick={this.handleRetry}
+                color="lime"
               >
-                <Button
-                  leftSection={<IconRefresh size={16} />}
-                  onClick={this.handleRetry}
-                  variant="filled"
-                  color="blue"
-                >
-                  Try Again
-                </Button>
-              </motion.div>
+                Try Again
+              </Button>
             </Group>
           </Card>
         </motion.div>

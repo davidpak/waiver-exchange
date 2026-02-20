@@ -72,6 +72,7 @@ export function NavigationProvider({ children }: NavigationProviderProps) {
         setProgress(0);
       }, 200);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- only trigger on pathname change, not isNavigating
   }, [pathname]);
 
   const navigate = useCallback((route: string) => {

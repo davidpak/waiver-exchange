@@ -88,11 +88,50 @@ export interface SnapshotResponse {
 
 export interface OrderBookState {
   symbol_id: number;
-  buy_orders: [number, number][];  // [price, quantity]
-  sell_orders: [number, number][]; // [price, quantity]
+  buy_orders: Record<string, number> | [number, number][];  // {price: qty} or [price, qty][]
+  sell_orders: Record<string, number> | [number, number][]; // {price: qty} or [price, qty][]
   last_trade_price: number | null;
   last_trade_quantity: number | null;
   last_trade_timestamp: string | null;
+}
+
+// ============================================================================
+// Account Position & Trade Types
+// ============================================================================
+
+export interface PositionResponse {
+  symbol_id: number;
+  player_name: string;
+  team: string;
+  position: string;
+  quantity: number;
+  avg_cost: number;
+  current_price: number;
+  market_value: number;
+  unrealized_pnl: number;
+}
+
+export interface PositionsListResponse {
+  account_id: number;
+  positions: PositionResponse[];
+  total_value: number;
+}
+
+export interface TradeResponse {
+  id: number;
+  symbol_id: number;
+  player_name: string;
+  side: string;
+  quantity: number;
+  price: number;
+  total_value: number;
+  timestamp: string;
+}
+
+export interface TradesListResponse {
+  account_id: number;
+  trades: TradeResponse[];
+  total_trades: number;
 }
 
 // ============================================================================

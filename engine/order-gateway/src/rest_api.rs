@@ -892,13 +892,211 @@ pub async fn get_current_snapshot(
     }
 }
 
+/// Position response for a single holding
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PositionResponse {
+    pub symbol_id: i64,
+    pub player_name: String,
+    pub team: String,
+    pub position: String,
+    pub quantity: i64,
+    pub avg_cost: i64,
+    pub current_price: i64,
+    pub market_value: i64,
+    pub unrealized_pnl: i64,
+}
+
+/// Positions list response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PositionsListResponse {
+    pub account_id: i64,
+    pub positions: Vec<PositionResponse>,
+    pub total_value: i64,
+}
+
+/// Trade response for a single trade
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TradeResponse {
+    pub id: i64,
+    pub symbol_id: i64,
+    pub player_name: String,
+    pub side: String,
+    pub quantity: i64,
+    pub price: i64,
+    pub total_value: i64,
+    pub timestamp: String,
+}
+
+/// Trades list response
+#[derive(Debug, Serialize, Deserialize)]
+pub struct TradesListResponse {
+    pub account_id: i64,
+    pub trades: Vec<TradeResponse>,
+    pub total_trades: usize,
+}
+
+/// Get account positions with current prices
+pub async fn get_account_positions(
+    account_id: i64,
+    registry: Arc<PlayerRegistry>,
+    db_pool: Arc<PgPool>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    let positions = sqlx::query!(
+        "SELECT symbol_id, quantity, avg_cost FROM positions WHERE account_id = $1 AND quantity != 0",
+        account_id
+    )
+    .fetch_all(&*db_pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to fetch positions: {}", e);
+        warp::reject::custom(NotFoundError(ErrorResponse {
+            error: ErrorDetail {
+                code: "DATABASE_ERROR".to_string(),
+                message: "Failed to fetch positions".to_string(),
+                details: Some(serde_json::Value::String(e.to_string())),
+            },
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        }))
+    })?;
+
+    let mut position_responses = Vec::new();
+    let mut total_value: i64 = 0;
+
+    for pos in positions {
+        let symbol_id = pos.symbol_id as u32;
+        let quantity = pos.quantity;
+        let avg_cost = pos.avg_cost;
+
+        // Get current price
+        let current_price = match get_fair_price_for_symbol(symbol_id, &db_pool).await {
+            Ok(Some(fp)) => fp.fair_cents,
+            _ => match get_latest_price_from_history(symbol_id, &db_pool).await {
+                Ok(Some(p)) => p,
+                _ => avg_cost, // fallback to avg_cost
+            },
+        };
+
+        let market_value = quantity * current_price;
+        let cost_basis = quantity * avg_cost;
+        let unrealized_pnl = market_value - cost_basis;
+        total_value += market_value;
+
+        // Get player info from registry
+        let (player_name, team, position) = match registry.get_by_symbol_id(symbol_id) {
+            Ok(player) => (player.name.clone(), player.team.clone(), player.position.clone()),
+            Err(_) => (format!("Player #{}", symbol_id), "???".to_string(), "???".to_string()),
+        };
+
+        position_responses.push(PositionResponse {
+            symbol_id: pos.symbol_id,
+            player_name,
+            team,
+            position,
+            quantity,
+            avg_cost,
+            current_price,
+            market_value,
+            unrealized_pnl,
+        });
+    }
+
+    let response = PositionsListResponse {
+        account_id,
+        positions: position_responses,
+        total_value,
+    };
+
+    Ok(warp::reply::json(&response))
+}
+
+/// Get account trade history
+pub async fn get_account_trades(
+    account_id: i64,
+    registry: Arc<PlayerRegistry>,
+    db_pool: Arc<PgPool>,
+) -> Result<impl warp::Reply, warp::Rejection> {
+    let trades = sqlx::query!(
+        "SELECT id, symbol_id, side, quantity, price, timestamp FROM trades WHERE account_id = $1 ORDER BY timestamp DESC LIMIT 100",
+        account_id
+    )
+    .fetch_all(&*db_pool)
+    .await
+    .map_err(|e| {
+        tracing::error!("Failed to fetch trades: {}", e);
+        warp::reject::custom(NotFoundError(ErrorResponse {
+            error: ErrorDetail {
+                code: "DATABASE_ERROR".to_string(),
+                message: "Failed to fetch trades".to_string(),
+                details: Some(serde_json::Value::String(e.to_string())),
+            },
+            timestamp: chrono::Utc::now().to_rfc3339(),
+        }))
+    })?;
+
+    let total_trades = trades.len();
+    let trade_responses: Vec<TradeResponse> = trades
+        .into_iter()
+        .map(|trade| {
+            let symbol_id = trade.symbol_id as u32;
+            let player_name = match registry.get_by_symbol_id(symbol_id) {
+                Ok(player) => player.name.clone(),
+                Err(_) => format!("Player #{}", symbol_id),
+            };
+
+            let total_value = trade.quantity * trade.price;
+
+            TradeResponse {
+                id: trade.id,
+                symbol_id: trade.symbol_id,
+                player_name,
+                side: trade.side.clone(),
+                quantity: trade.quantity,
+                price: trade.price,
+                total_value,
+                timestamp: trade.timestamp.map(|t| t.format("%Y-%m-%dT%H:%M:%S%.fZ").to_string()).unwrap_or_default(),
+            }
+        })
+        .collect();
+
+    let response = TradesListResponse {
+        account_id,
+        trades: trade_responses,
+        total_trades,
+    };
+
+    Ok(warp::reply::json(&response))
+}
+
 /// Create REST API routes
+async fn handle_rejection(err: warp::Rejection) -> Result<impl warp::Reply, std::convert::Infallible> {
+    let (code, message) = if let Some(e) = err.find::<NotFoundError>() {
+        (warp::http::StatusCode::NOT_FOUND, e.0.error.message.clone())
+    } else if err.is_not_found() {
+        (warp::http::StatusCode::NOT_FOUND, "Not found".to_string())
+    } else if err.find::<warp::reject::MethodNotAllowed>().is_some() {
+        (warp::http::StatusCode::METHOD_NOT_ALLOWED, "Method not allowed".to_string())
+    } else {
+        (warp::http::StatusCode::INTERNAL_SERVER_ERROR, "Internal server error".to_string())
+    };
+
+    let json = warp::reply::json(&ErrorResponse {
+        error: ErrorDetail {
+            code: code.as_u16().to_string(),
+            message,
+            details: None,
+        },
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    });
+
+    Ok(warp::reply::with_status(json, code))
+}
+
 pub fn create_routes(
     registry: Arc<PlayerRegistry>,
     db_pool: Arc<PgPool>,
     snapshot_manager: Arc<SnapshotManager>,
     cache: Arc<CacheManager>,
-) -> impl Filter<Extract = impl warp::Reply, Error = warp::Rejection> + Clone {
+) -> impl Filter<Extract = (impl warp::Reply,), Error = std::convert::Infallible> + Clone {
     let registry_filter = warp::any().map(move || registry.clone());
     let db_pool_filter = warp::any().map(move || db_pool.clone());
     let snapshot_filter = warp::any().map(move || snapshot_manager.clone());
@@ -1000,6 +1198,42 @@ pub fn create_routes(
         .and(db_pool_filter.clone())
         .and_then(test_scheduler_logic);
 
+    // Account positions endpoint
+    let account_positions = warp::path("api")
+        .and(warp::path("account"))
+        .and(warp::path("positions"))
+        .and(warp::get())
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(registry_filter.clone())
+        .and(db_pool_filter.clone())
+        .and_then(
+            |params: std::collections::HashMap<String, String>,
+             registry: Arc<PlayerRegistry>,
+             db_pool: Arc<PgPool>| async move {
+                let account_id =
+                    params.get("account_id").and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
+                get_account_positions(account_id, registry, db_pool).await
+            },
+        );
+
+    // Account trades endpoint
+    let account_trades = warp::path("api")
+        .and(warp::path("account"))
+        .and(warp::path("trades"))
+        .and(warp::get())
+        .and(warp::query::<std::collections::HashMap<String, String>>())
+        .and(registry_filter.clone())
+        .and(db_pool_filter.clone())
+        .and_then(
+            |params: std::collections::HashMap<String, String>,
+             registry: Arc<PlayerRegistry>,
+             db_pool: Arc<PgPool>| async move {
+                let account_id =
+                    params.get("account_id").and_then(|s| s.parse::<i64>().ok()).unwrap_or(1);
+                get_account_trades(account_id, registry, db_pool).await
+            },
+        );
+
     // Snapshot endpoint
     let snapshot = warp::path("api")
         .and(warp::path("snapshot"))
@@ -1024,6 +1258,8 @@ pub fn create_routes(
         .or(current_price)
         .or(bulk_prices)
         .or(price_history)
+        .or(account_positions)
+        .or(account_trades)
         .or(account_summary)
         .or(equity_history)
         .or(create_snapshots)
@@ -1036,4 +1272,5 @@ pub fn create_routes(
                 .allow_headers(vec!["content-type"])
                 .allow_methods(vec!["GET", "POST", "OPTIONS"]),
         )
+        .recover(handle_rejection)
 }

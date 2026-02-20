@@ -1,138 +1,233 @@
 import { createTheme, MantineColorsTuple } from '@mantine/core';
 
-// Custom color palette for trading platform
-const tradingBlue: MantineColorsTuple = [
-  '#e7f5ff',
-  '#d0ebff',
-  '#a5d8ff',
-  '#74c0fc',
-  '#339af0',
-  '#228be6',
-  '#1c7ed6',
-  '#1971c2',
-  '#1864ab',
-  '#0c5aa6'
+// Gold accent — Binance-inspired
+const gold: MantineColorsTuple = [
+  '#FFF8E1', // 0: lightest tint
+  '#FFECB3', // 1
+  '#FFD54F', // 2
+  '#F0B90B', // 3: primary accent (Binance gold)
+  '#D4A20A', // 4: hover
+  '#B88C09', // 5: pressed
+  '#9C7608', // 6
+  '#7A5C06', // 7
+  '#584205', // 8
+  '#3D2E03', // 9: darkest shade
 ];
 
-const tradingGreen: MantineColorsTuple = [
-  '#ebfbee',
-  '#d3f9d8',
-  '#b2f2bb',
-  '#8ce99a',
-  '#69db7c',
-  '#51cf66',
-  '#40c057',
-  '#37b24d',
-  '#2f9e44',
-  '#2b8a3e'
+// Dark palette — Binance-inspired, text deliberately muted
+const dark: MantineColorsTuple = [
+  '#EAECEF', // 0: primary text (Binance standard — not pure white)
+  '#B7BDC6', // 1: secondary text
+  '#848E9C', // 2: tertiary / labels
+  '#5E6673', // 3: disabled / muted
+  '#2B3139', // 4: borders, dividers
+  '#1E2329', // 5: elevated surfaces (cards, inputs)
+  '#181A20', // 6: panels, sidebars
+  '#0B0E11', // 7: body background
+  '#090C0F', // 8: header, fixed bars
+  '#060708', // 9: deepest
 ];
 
-const tradingRed: MantineColorsTuple = [
-  '#ffe3e3',
-  '#ffc9c9',
-  '#ffa8a8',
-  '#ff8787',
-  '#ff6b6b',
-  '#fa5252',
-  '#f03e3e',
-  '#e03131',
-  '#c92a2a',
-  '#a61e1e'
-];
-
-/**
- * Professional theme configuration for the trading platform
- * Supports both dark and light modes with proper contrast and accessibility
- */
 export const tradingTheme = createTheme({
-  /** Primary color scheme */
-  primaryColor: 'blue',
-  
-  /** Custom color palette */
+  primaryColor: 'gold',
+  primaryShade: 3,
+  autoContrast: true,
+
   colors: {
-    tradingBlue,
-    tradingGreen,
-    tradingRed,
+    gold,
+    dark,
   },
-  
-  
-  /** Font configuration */
-  fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif',
-  fontFamilyMonospace: 'JetBrains Mono, Monaco, Consolas, monospace',
-  
-  /** Default radius for components */
+
+  fontFamilyMonospace: 'var(--font-mono)',
+
   defaultRadius: 'md',
-  
-  /** Headings configuration */
+
   headings: {
-    fontFamily: 'Inter, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif',
+    fontFamily: undefined,
     fontWeight: '600',
     sizes: {
-      h1: { fontSize: '2.5rem', lineHeight: '1.2' },
-      h2: { fontSize: '2rem', lineHeight: '1.3' },
-      h3: { fontSize: '1.5rem', lineHeight: '1.4' },
-      h4: { fontSize: '1.25rem', lineHeight: '1.4' },
-      h5: { fontSize: '1.125rem', lineHeight: '1.4' },
-      h6: { fontSize: '1rem', lineHeight: '1.4' },
+      h1: { fontSize: '1.75rem', lineHeight: '1.2' },
+      h2: { fontSize: '1.375rem', lineHeight: '1.3' },
+      h3: { fontSize: '1.125rem', lineHeight: '1.4' },
+      h4: { fontSize: '0.975rem', lineHeight: '1.4' },
     },
   },
-  
-  /** Component default props */
+
   components: {
     Button: {
       defaultProps: {
         radius: 'md',
       },
+      styles: {
+        root: {
+          fontWeight: 600,
+          transition: 'all 0.15s ease',
+        },
+      },
     },
-    
+
+    Paper: {
+      defaultProps: {
+        radius: 'md',
+      },
+      styles: {
+        root: {
+          backgroundColor: 'var(--mantine-color-dark-6)',
+        },
+      },
+    },
+
     Card: {
       defaultProps: {
         radius: 'md',
-        shadow: 'sm',
+      },
+      styles: {
+        root: {
+          backgroundColor: 'var(--mantine-color-dark-6)',
+        },
       },
     },
-    
+
+    Modal: {
+      defaultProps: {
+        radius: 'lg',
+      },
+      styles: {
+        content: {
+          backgroundColor: 'var(--mantine-color-dark-6)',
+          border: '1px solid var(--border-default)',
+          boxShadow: '0 16px 48px rgba(0, 0, 0, 0.5)',
+        },
+        header: {
+          backgroundColor: 'var(--mantine-color-dark-6)',
+        },
+        overlay: {
+          backdropFilter: 'blur(4px)',
+        },
+      },
+    },
+
+    Popover: {
+      styles: {
+        dropdown: {
+          backgroundColor: 'var(--mantine-color-dark-6)',
+          borderColor: 'var(--border-default)',
+          boxShadow: '0 8px 24px rgba(0, 0, 0, 0.4)',
+        },
+      },
+    },
+
+    Table: {
+      styles: {
+        table: {
+          borderCollapse: 'separate' as const,
+          borderSpacing: 0,
+        },
+        th: {
+          fontWeight: 500,
+          fontSize: '11px',
+          textTransform: 'uppercase' as const,
+          letterSpacing: '0.06em',
+          padding: '10px 12px',
+          color: 'var(--mantine-color-dark-2)',
+        },
+        td: {
+          padding: '10px 12px',
+          fontSize: '13px',
+        },
+        tr: {
+          transition: 'background-color 0.1s ease',
+        },
+      },
+    },
+
+    Drawer: {
+      styles: {
+        content: {
+          backgroundColor: 'var(--mantine-color-dark-6)',
+        },
+        header: {
+          backgroundColor: 'var(--mantine-color-dark-6)',
+        },
+      },
+    },
+
+    SegmentedControl: {
+      styles: {
+        root: {
+          backgroundColor: 'var(--mantine-color-dark-5)',
+          borderRadius: 'var(--mantine-radius-md)',
+        },
+      },
+    },
+
+    Tabs: {
+      styles: {
+        tab: {
+          fontWeight: 500,
+          fontSize: '12px',
+          letterSpacing: '0.02em',
+          transition: 'color 0.15s ease, border-color 0.15s ease',
+        },
+      },
+    },
+
     TextInput: {
       defaultProps: {
         radius: 'md',
       },
+      styles: {
+        input: {
+          backgroundColor: 'var(--mantine-color-dark-5)',
+          borderColor: 'var(--border-default)',
+          transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+          '&:focus': {
+            borderColor: 'var(--mantine-color-gold-3)',
+            boxShadow: '0 0 0 3px rgba(240, 185, 11, 0.1)',
+          },
+        },
+      },
     },
-    
-    Select: {
+
+    NumberInput: {
       defaultProps: {
         radius: 'md',
       },
-    },
-    
-    Modal: {
-      defaultProps: {
-        radius: 'md',
-        shadow: 'xl',
+      styles: {
+        input: {
+          backgroundColor: 'var(--mantine-color-dark-5)',
+          borderColor: 'var(--border-default)',
+          transition: 'border-color 0.15s ease, box-shadow 0.15s ease',
+        },
       },
-    }
+    },
+
+    Badge: {
+      defaultProps: {
+        radius: 'sm',
+      },
+    },
+
+    Tooltip: {
+      defaultProps: {
+        color: 'dark.5',
+        radius: 'md',
+      },
+    },
+
+    Skeleton: {
+      styles: {
+        root: {
+          '&::after': {
+            background: 'linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.03), transparent)',
+          },
+        },
+      },
+    },
   },
-  
-  /** Dark theme overrides */
+
   other: {
-    // Custom CSS variables for animations and effects
-    animationDuration: '0.2s',
-    animationEasing: 'cubic-bezier(0.4, 0, 0.2, 1)',
-    
-    // Trading-specific colors
-    priceUp: 'var(--mantine-color-trading-green-6)',
-    priceDown: 'var(--mantine-color-trading-red-6)',
-    priceNeutral: 'var(--mantine-color-gray-6)',
-    
-    // Layout spacing
-    headerHeight: '60px',
-    sidebarWidth: '280px',
-    
-    // Z-index layers
-    zIndex: {
-      header: 1000,
-      modal: 2000,
-      tooltip: 3000,
-      notification: 4000,
-    },
+    headerHeight: '48px',
+    tickerHeight: '36px',
   },
 });

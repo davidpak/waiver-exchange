@@ -19,9 +19,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     info!("Starting REST API server...");
 
+    // Resolve data directory
+    let data_dir = std::env::var("WAIVER_DATA_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("./data"));
+    let data_dir = if data_dir.is_relative() {
+        std::env::current_dir()?.join(&data_dir)
+    } else {
+        data_dir
+    };
+    info!("Data directory: {:?}", data_dir);
+
     // Load player registry
     let mut registry = PlayerRegistry::new();
-    registry.load_and_assign_symbols("data/players/season_projections_2025.json").await?;
+    registry.load_and_assign_symbols(data_dir.join("players/season_projections_2025.json")).await?;
     let registry = Arc::new(registry);
 
     info!("Loaded {} players into registry", registry.symbol_count());
@@ -41,7 +52,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         compress: true,
         snapshot_on_shutdown: true,
     };
-    let snapshots_dir = PathBuf::from("data/snapshots");
+    let snapshots_dir = data_dir.join("snapshots");
     let snapshot_manager = SnapshotManager::new(snapshot_config, snapshots_dir)?;
     let snapshot_manager = Arc::new(snapshot_manager);
     info!("Created snapshot manager");

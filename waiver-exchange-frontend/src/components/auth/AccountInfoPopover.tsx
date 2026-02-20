@@ -2,18 +2,17 @@
 
 import { useAuthStore } from '@/stores/authStore';
 import {
-    Avatar,
-    Badge,
-    Box,
-    Button,
-    Divider,
-    Group,
-    Popover,
-    Stack,
-    Text,
-    Title,
+  Avatar,
+  Badge,
+  Box,
+  Button,
+  Divider,
+  Group,
+  Popover,
+  Stack,
+  Text,
 } from '@mantine/core';
-import { IconLogout, IconShield, IconUser } from '@tabler/icons-react';
+import { IconLogout, IconShield, IconUser, IconWifi, IconWifiOff } from '@tabler/icons-react';
 import { useEffect, useRef, useState } from 'react';
 
 interface AccountInfoPopoverProps {
@@ -21,7 +20,16 @@ interface AccountInfoPopoverProps {
 }
 
 export function AccountInfoPopover({ children }: AccountInfoPopoverProps) {
-  const { user, accountId, sleeperSetupComplete, sleeperUsername, sleeperLeagueId, logout } = useAuthStore();
+  const {
+    user,
+    accountId,
+    sleeperSetupComplete,
+    sleeperUsername,
+    sleeperLeagueId,
+    wsConnected,
+    wsAuthenticated,
+    logout,
+  } = useAuthStore();
   const [opened, setOpened] = useState(false);
   const targetRef = useRef<HTMLDivElement>(null);
 
@@ -30,21 +38,14 @@ export function AccountInfoPopover({ children }: AccountInfoPopoverProps) {
     setOpened(false);
   };
 
-  // Close popover when clicking outside
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
       if (targetRef.current && !targetRef.current.contains(event.target as Node)) {
         setOpened(false);
       }
     };
-
-    if (opened) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-
-    return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
-    };
+    if (opened) document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [opened]);
 
   return (
@@ -53,141 +54,134 @@ export function AccountInfoPopover({ children }: AccountInfoPopoverProps) {
       onChange={setOpened}
       position="bottom-end"
       withArrow
-      shadow="md"
+      shadow="lg"
       radius="md"
       width={320}
       withinPortal
     >
       <Popover.Target>
-        <Box 
-          ref={targetRef}
-          style={{ cursor: 'pointer' }}
-          onClick={() => setOpened(!opened)}
-        >
+        <Box ref={targetRef} style={{ cursor: 'pointer' }} onClick={() => setOpened(!opened)}>
           {children}
         </Box>
       </Popover.Target>
-      
+
       <Popover.Dropdown>
         <Stack gap="md">
           {/* Header */}
           <Group gap="sm">
-            <Avatar size="lg" color="blue">
+            <Avatar size="lg" radius="xl" color="dark" variant="filled">
               <IconUser size={20} />
             </Avatar>
             <Box style={{ flex: 1 }}>
-              <Title order={5} size="h6" mb="xs">
+              <Text size="sm" fw={600}>
                 {user?.name || 'User'}
-              </Title>
-              <Text size="sm" c="dimmed">
-                {user?.email || 'user@example.com'}
               </Text>
-              {user?.id === 'temp' && (
-                <Text size="xs" c="orange">
-                  Account details loading...
-                </Text>
-              )}
+              <Text size="xs" c="dimmed">{user?.email || 'user@example.com'}</Text>
             </Box>
           </Group>
 
           <Divider />
 
-                 {/* Account Info */}
-                 <Stack gap="xs">
-                   <Text size="sm" fw={500} c="dimmed">
-                     Account Information
-                   </Text>
-                   
-                   <Group justify="space-between">
-                     <Text size="sm">Account ID:</Text>
-                     <Text size="sm" ff="monospace" c="dimmed">
-                       {accountId || 'N/A'}
-                     </Text>
-                   </Group>
+          {/* Connection status */}
+          <Group gap="xs">
+            {wsConnected ? (
+              <IconWifi size={14} color="var(--color-profit)" />
+            ) : (
+              <IconWifiOff size={14} color="var(--mantine-color-dimmed)" />
+            )}
+            <Text size="xs" c="dimmed">
+              {wsConnected
+                ? wsAuthenticated
+                  ? 'Connected & Authenticated'
+                  : 'Connected'
+                : 'Disconnected'}
+            </Text>
+          </Group>
 
-                   <Group justify="space-between">
-                     <Text size="sm">User ID:</Text>
-                     <Text size="sm" ff="monospace" c="dimmed">
-                       {user?.id || 'N/A'}
-                     </Text>
-                   </Group>
+          {/* Account info */}
+          <Stack gap="xs">
+            <Text size="xs" c="dimmed" tt="uppercase" fw={600} lts="0.05em">
+              Account
+            </Text>
+            <InfoRow label="Account ID" value={accountId || '\u2014'} mono />
+            <InfoRow label="User ID" value={user?.id || '\u2014'} mono />
+            <InfoRow
+              label="Balance"
+              value={
+                user?.currency_balance_dollars != null
+                  ? `$${user.currency_balance_dollars.toFixed(2)}`
+                  : '\u2014'
+              }
+              mono
+            />
+            <InfoRow
+              label="Status"
+              value={
+                <Badge
+                  color={sleeperSetupComplete ? 'green' : 'orange'}
+                  variant="light"
+                  size="xs"
+                >
+                  {sleeperSetupComplete ? 'Connected' : 'Beta'}
+                </Badge>
+              }
+            />
+          </Stack>
 
-                   <Group justify="space-between">
-                     <Text size="sm">Email:</Text>
-                     <Text size="sm" c="dimmed">
-                       {user?.email || 'N/A'}
-                     </Text>
-                   </Group>
-
-                   <Group justify="space-between">
-                     <Text size="sm">Fantasy Points:</Text>
-                     <Text size="sm" c="dimmed">
-                       {user?.fantasy_points || 'N/A'}
-                     </Text>
-                   </Group>
-
-                   <Group justify="space-between">
-                     <Text size="sm">Balance:</Text>
-                     <Text size="sm" c="dimmed">
-                       ${user?.currency_balance_dollars ? user.currency_balance_dollars.toFixed(2) : 'N/A'}
-                     </Text>
-                   </Group>
-
-                   <Group justify="space-between">
-                     <Text size="sm">Status:</Text>
-                     <Badge 
-                       color={sleeperSetupComplete ? 'green' : 'orange'} 
-                       variant="light" 
-                       size="sm"
-                     >
-                       {sleeperSetupComplete ? 'Connected' : 'Beta'}
-                     </Badge>
-                   </Group>
-                 </Stack>
-
-          {/* Sleeper Integration */}
+          {/* Sleeper */}
           {sleeperSetupComplete && (
             <>
               <Divider />
               <Stack gap="xs">
-                <Group gap="xs">
-                  <IconShield size={16} />
-                  <Text size="sm" fw={500} c="dimmed">
-                    Sleeper Integration
+                <Group gap={4}>
+                  <IconShield size={12} />
+                  <Text size="xs" c="dimmed" tt="uppercase" fw={600} lts="0.05em">
+                    Sleeper
                   </Text>
                 </Group>
-                
-                <Group justify="space-between">
-                  <Text size="sm">Username:</Text>
-                  <Text size="sm" c="dimmed">
-                    {sleeperUsername || 'N/A'}
-                  </Text>
-                </Group>
-
-                <Group justify="space-between">
-                  <Text size="sm">League ID:</Text>
-                  <Text size="sm" ff="monospace" c="dimmed">
-                    {sleeperLeagueId || 'N/A'}
-                  </Text>
-                </Group>
+                <InfoRow label="Username" value={sleeperUsername || '\u2014'} />
+                <InfoRow label="League" value={sleeperLeagueId || '\u2014'} mono />
               </Stack>
             </>
           )}
 
           <Divider />
 
-          {/* Actions */}
           <Button
             variant="light"
             color="red"
-            leftSection={<IconLogout size={16} />}
+            leftSection={<IconLogout size={14} />}
             onClick={handleLogout}
             fullWidth
+            size="sm"
           >
             Sign Out
           </Button>
         </Stack>
       </Popover.Dropdown>
     </Popover>
+  );
+}
+
+function InfoRow({
+  label,
+  value,
+  mono,
+}: {
+  label: string;
+  value: React.ReactNode;
+  mono?: boolean;
+}) {
+  return (
+    <Group justify="space-between">
+      <Text size="xs" c="dimmed">{label}</Text>
+      {typeof value === 'string' ? (
+        <Text size="xs" className={mono ? 'mono' : undefined}>
+          {value}
+        </Text>
+      ) : (
+        value
+      )}
+    </Group>
   );
 }

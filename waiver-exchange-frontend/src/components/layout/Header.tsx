@@ -1,476 +1,194 @@
 'use client';
 
 import { AccountInfoPopover } from '@/components/auth/AccountInfoPopover';
-import { AnimatedButton } from '@/components/ui/AnimatedButton';
-import { NavigationButton } from '@/components/ui/NavigationButton';
+import { useTrading } from '@/contexts/TradingContext';
 import { useNavigation } from '@/contexts/NavigationContext';
-import { useCustomTheme } from '@/hooks/useCustomTheme';
 import { useAuthStore } from '@/stores/authStore';
-import { AppShell, Avatar, Badge, Box, Burger, Drawer, Group, NavLink, Text, ThemeIcon } from '@mantine/core';
-import { useDisclosure } from '@mantine/hooks';
-import { IconBell, IconDashboard, IconList, IconMoon, IconSettings, IconSun, IconUser } from '@tabler/icons-react';
-import { useRouter } from 'next/navigation';
+import { useWebSocket } from '@/hooks/useWebSocket';
+import {
+  Avatar,
+  Box,
+  Burger,
+  Button,
+  Drawer,
+  Group,
+  Kbd,
+  NavLink,
+  Text,
+  Tooltip,
+  UnstyledButton,
+} from '@mantine/core';
+import { useDisclosure, useHotkeys } from '@mantine/hooks';
+import {
+  IconDashboard,
+  IconLayoutList,
+  IconSearch,
+  IconUser,
+  IconWifi,
+  IconWifiOff,
+} from '@tabler/icons-react';
 import { useCallback, useMemo } from 'react';
 
-interface HeaderProps {
-  onNavigate?: (route: string) => void;
-  onToggleTheme?: () => void;
-  currentRoute?: string;
-}
-
-/**
- * Professional header component with smooth animations and interactions
- * Handles navigation, authentication states, and theme switching
- */
-function Header({ 
-  onNavigate,
-  onToggleTheme,
-  currentRoute
-}: HeaderProps) {
-  const { theme, toggleTheme, isDark } = useCustomTheme();
-  const [opened, { toggle, close }] = useDisclosure(false);
-  const { currentRoute: navCurrentRoute, navigate, isNavigating } = useNavigation();
+export function Header() {
+  const [drawerOpen, { toggle: toggleDrawer, close: closeDrawer }] = useDisclosure(false);
+  const { currentRoute, navigate } = useNavigation();
   const { isAuthenticated } = useAuthStore();
-  const router = useRouter();
-  
-  // Use navigation context route or fallback to prop
-  const activeRoute = navCurrentRoute || currentRoute || 'dashboard';
+  const { connected } = useWebSocket();
+  const { openSearch } = useTrading();
 
-  const handleThemeToggle = () => {
-    toggleTheme();
-    onToggleTheme?.();
-  };
+  useHotkeys([['mod+K', openSearch]]);
 
-  const handleNavigation = useCallback((route: string) => {
-    // Always use NavigationContext if available
-    navigate(route);
-    // Also call the prop for backward compatibility
-    onNavigate?.(route);
-    close(); // Close mobile drawer after navigation
-  }, [navigate, onNavigate, close]);
-  
-  // Memoize the navigation buttons to prevent re-renders
-  const navigationButtons = useMemo(() => (
-    <Group gap="xs" ml="xl">
-      <NavigationButton
-        icon={IconDashboard}
-        isActive={activeRoute === 'dashboard'}
-        onClick={() => handleNavigation('dashboard')}
-      >
-        Dashboard
-      </NavigationButton>
-      <NavigationButton
-        icon={IconList}
-        isActive={activeRoute === 'market'}
-        onClick={() => handleNavigation('market')}
-      >
-        Market
-      </NavigationButton>
-    </Group>
-  ), [activeRoute, handleNavigation]);
+  const handleNavigation = useCallback(
+    (route: string) => {
+      navigate(route);
+      closeDrawer();
+    },
+    [navigate, closeDrawer]
+  );
+
+  const navItems = useMemo(
+    () => [
+      { route: 'dashboard', label: 'Dashboard', icon: IconDashboard },
+      { route: 'market', label: 'Markets', icon: IconLayoutList },
+    ],
+    []
+  );
 
   return (
     <>
-      <AppShell.Header
-               style={{
-                 backgroundColor: 'var(--site-bg)',
-                 borderBottom: '1px solid var(--border-primary)',
-                 backdropFilter: 'blur(10px)',
-                 zIndex: 1000,
-                 // Prevent layout shifts during re-renders
-                 contain: 'layout style',
-                 willChange: 'auto',
-                 // Force stable layout
-                 position: 'relative',
-                 overflow: 'hidden'
-               }}
+      <Box
+        component="header"
+        style={{
+          height: 48,
+          background: 'rgba(13, 15, 20, 0.80)',
+          backdropFilter: 'blur(12px)',
+          WebkitBackdropFilter: 'blur(12px)',
+          borderBottom: '1px solid var(--border-subtle)',
+          display: 'flex',
+          alignItems: 'center',
+          paddingInline: 16,
+          flexShrink: 0,
+          zIndex: 100,
+        }}
       >
-        <Group h="100%" px="md" justify="space-between" key="header-main-group">
-          {/* Left Section - Mobile Burger + Logo */}
+        <Group justify="space-between" style={{ width: '100%' }}>
+          {/* Left: burger + logo + nav */}
           <Group gap="md">
-            {/* Mobile Burger Menu */}
             <Box hiddenFrom="md">
-                     <Burger
-                       opened={opened}
-                       onClick={toggle}
-                       size="sm"
-                       color="var(--text-primary)"
-                     />
+              <Burger opened={drawerOpen} onClick={toggleDrawer} size="sm" />
             </Box>
-            
-                   {/* Logo */}
-                   <Group gap="sm">
-                     <Text size="xl" fw={700} c="var(--text-primary)">
-                       The Waiver Exchange
-                     </Text>
-                     <Badge color="orange" variant="light" size="sm">
-                       Beta
-                     </Badge>
-                   </Group>
-            
-            {/* Desktop Navigation - Only visible on desktop, right after logo */}
+
+            <UnstyledButton onClick={() => handleNavigation('dashboard')}>
+              <Text fw={700} fz={15} c="dark.0">
+                Waiver Exchange
+              </Text>
+            </UnstyledButton>
+
+            <Box
+              visibleFrom="md"
+              style={{
+                width: 1,
+                height: 20,
+                backgroundColor: 'var(--border-default)',
+              }}
+            />
+
             <Box visibleFrom="md">
-              {navigationButtons}
+              <Group gap={4}>
+                {navItems.map((item) => (
+                  <Button
+                    key={item.route}
+                    variant={currentRoute === item.route ? 'filled' : 'subtle'}
+                    color={currentRoute === item.route ? 'gold' : 'gray'}
+                    size="compact-xs"
+                    fz={13}
+                    onClick={() => handleNavigation(item.route)}
+                  >
+                    {item.label}
+                  </Button>
+                ))}
+              </Group>
             </Box>
           </Group>
-          
-          {/* Right Section - Theme Toggle & Auth */}
+
+          {/* Right: search + connection + account */}
           <Group gap="sm">
-            <ThemeIcon
-              variant="subtle"
-              color="gray"
-              onClick={handleThemeToggle}
-              size="lg"
-              style={{ 
-                cursor: 'pointer',
-                transition: 'all 0.2s ease',
-                opacity: 0.9
-              }}
-              onMouseEnter={(e) => {
-                e.currentTarget.style.opacity = '1';
-              }}
-              onMouseLeave={(e) => {
-                e.currentTarget.style.opacity = '0.9';
-              }}
-            >
-              {isDark ? <IconSun size={20} /> : <IconMoon size={20} />}
-            </ThemeIcon>
-            
+            <Tooltip label="Search players (⌘K)">
+              <UnstyledButton
+                onClick={openSearch}
+                px={8}
+                py={4}
+                style={{
+                  borderRadius: 'var(--mantine-radius-sm)',
+                  border: '1px solid var(--border-default)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                }}
+              >
+                <IconSearch size={13} color="var(--mantine-color-dark-2)" />
+                <Text fz={12} c="dark.2" visibleFrom="lg">Search</Text>
+                <Kbd size="xs" visibleFrom="lg">⌘K</Kbd>
+              </UnstyledButton>
+            </Tooltip>
+
+            <Tooltip label={connected ? 'Connected' : 'Disconnected'}>
+              <Box style={{ display: 'flex', alignItems: 'center' }}>
+                {connected ? (
+                  <IconWifi size={14} color="var(--color-profit)" />
+                ) : (
+                  <IconWifiOff size={14} color="var(--mantine-color-dark-2)" />
+                )}
+              </Box>
+            </Tooltip>
+
             {isAuthenticated ? (
-              // Authenticated User
-              <Group gap="sm">
-                <Box hiddenFrom="sm">
-                  <Avatar 
-                    size="md" 
-                    color="blue"
-                    style={{ 
-                      transition: 'all 0.2s ease',
-                      opacity: 0.9
-                    }}
-                    onMouseEnter={(e) => {
-                      e.currentTarget.style.opacity = '1';
-                    }}
-                    onMouseLeave={(e) => {
-                      e.currentTarget.style.opacity = '0.9';
-                    }}
-                  >
-                    <IconUser size={16} />
-                  </Avatar>
-                </Box>
-                
-                <Box visibleFrom="sm">
-                  <Group gap="sm">
-                    <ThemeIcon 
-                      radius="md" 
-                      color="gray" 
-                      size="lg"
-                      style={{ 
-                        transition: 'all 0.2s ease',
-                        opacity: 0.9
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.opacity = '1';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.opacity = '0.9';
-                      }}
-                    >
-                      <IconBell size={20} />
-                    </ThemeIcon>
-                    
-                    <ThemeIcon 
-                      radius="md" 
-                      color="gray" 
-                      size="lg"
-                      style={{ 
-                        transition: 'all 0.2s ease',
-                        opacity: 0.9
-                      }}
-                      onMouseEnter={(e) => {
-                        e.currentTarget.style.opacity = '1';
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.opacity = '0.9';
-                      }}
-                    >
-                      <IconSettings size={20} />
-                    </ThemeIcon>
-                    
-                    <AccountInfoPopover>
-                      <Avatar 
-                        size="md" 
-                        color="blue"
-                        style={{ 
-                          transition: 'all 0.2s ease',
-                          cursor: 'pointer'
-                        }}
-                      >
-                        <IconUser size={16} />
-                      </Avatar>
-                    </AccountInfoPopover>
-                  </Group>
-                </Box>
-              </Group>
+              <AccountInfoPopover>
+                <Avatar
+                  size={28}
+                  radius="sm"
+                  color="dark"
+                  variant="filled"
+                  style={{ cursor: 'pointer' }}
+                >
+                  <IconUser size={14} />
+                </Avatar>
+              </AccountInfoPopover>
             ) : (
-              // Guest User
-              <Group gap="sm">
-                <Box hiddenFrom="sm">
-                  <AnimatedButton
-                    variant="primary"
-                    size="sm"
-                    onClick={() => handleNavigation('login')}
-                  >
-                    Log In
-                  </AnimatedButton>
-                </Box>
-                
-                <Box visibleFrom="sm">
-                  <Group gap="sm">
-                    <AnimatedButton
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => handleNavigation('login')}
-                    >
-                      Log In
-                    </AnimatedButton>
-                    <AnimatedButton
-                      variant="primary"
-                      size="sm"
-                      onClick={() => handleNavigation('signup')}
-                    >
-                      Sign Up
-                    </AnimatedButton>
-                  </Group>
-                </Box>
-              </Group>
+              <Button
+                size="compact-xs"
+                variant="filled"
+                color="gold"
+                fz={12}
+                onClick={() => handleNavigation('login')}
+              >
+                Sign In
+              </Button>
             )}
           </Group>
         </Group>
-      </AppShell.Header>
+      </Box>
 
-      {/* Mobile Drawer */}
       <Drawer
-        opened={opened}
-        onClose={close}
-        title="Navigation"
+        opened={drawerOpen}
+        onClose={closeDrawer}
+        title={<Text fw={700}>Waiver Exchange</Text>}
         size="xs"
-               styles={{
-                 content: {
-                   backgroundColor: 'var(--mantine-color-body)',
-                 },
-                 header: {
-                   backgroundColor: 'var(--mantine-color-body)',
-                   borderBottom: '1px solid var(--mantine-color-default-border)',
-                 },
-                 title: {
-                   color: 'var(--mantine-color-text)',
-                   fontWeight: 600,
-                 },
-               }}
       >
-        <Box w={240} mt="md">
-          {/* Main Navigation */}
-              <NavLink
-                href="#dashboard"
-                active={activeRoute === 'dashboard'}
-                label="Dashboard"
-                leftSection={<IconDashboard size={16} stroke={1.5} />}
-                onClick={() => handleNavigation('dashboard')}
-                styles={{
-                  root: {
-                    borderRadius: '6px',
-                    marginBottom: '4px',
-                    color: 'var(--mantine-color-text)',
-                    '&[data-active]': {
-                      backgroundColor: 'var(--mantine-color-blue-1)',
-                      color: 'var(--mantine-color-blue-6)',
-                    },
-                    '&:hover': {
-                      backgroundColor: 'var(--mantine-color-default-hover)',
-                    },
-                  },
-                  label: {
-                    color: 'inherit',
-                    '&[data-active]': {
-                      color: 'var(--mantine-color-blue-6)',
-                    },
-                  },
-                }}
-              />
-          
-          <NavLink
-            href="#market"
-            active={activeRoute === 'market'}
-            label="Market"
-            leftSection={<IconList size={16} stroke={1.5} />}
-            onClick={() => handleNavigation('market')}
-            styles={{
-              root: {
-                borderRadius: '6px',
-                marginBottom: '4px',
-                color: 'var(--mantine-color-text)',
-              },
-              label: {
-                color: 'var(--mantine-color-text)',
-              },
-            }}
-          />
-          
-          {/* User Actions */}
-          {isAuthenticated ? (
-            <>
-              <Text size="sm" c="dimmed" mt="lg" mb="sm">Account</Text>
-              
-              <NavLink
-                href="#notifications"
-                active={activeRoute === 'notifications'}
-                label="Notifications"
-                leftSection={<IconBell size={16} stroke={1.5} />}
-                onClick={() => handleNavigation('notifications')}
-                styles={{
-                  root: {
-                    borderRadius: '6px',
-                    marginBottom: '4px',
-                    color: 'var(--mantine-color-text)',
-                    '&[data-active]': {
-                      backgroundColor: 'var(--mantine-color-blue-1)',
-                      color: 'var(--mantine-color-blue-6)',
-                    },
-                    '&:hover': {
-                      backgroundColor: 'var(--mantine-color-default-hover)',
-                    },
-                  },
-                  label: {
-                    color: 'inherit',
-                    '&[data-active]': {
-                      color: 'var(--mantine-color-blue-6)',
-                    },
-                  },
-                }}
-              />
-              
-              <NavLink
-                href="#settings"
-                active={activeRoute === 'settings'}
-                label="Settings"
-                leftSection={<IconSettings size={16} stroke={1.5} />}
-                onClick={() => handleNavigation('settings')}
-                styles={{
-                  root: {
-                    borderRadius: '6px',
-                    marginBottom: '4px',
-                    color: 'var(--mantine-color-text)',
-                    '&[data-active]': {
-                      backgroundColor: 'var(--mantine-color-blue-1)',
-                      color: 'var(--mantine-color-blue-6)',
-                    },
-                    '&:hover': {
-                      backgroundColor: 'var(--mantine-color-default-hover)',
-                    },
-                  },
-                  label: {
-                    color: 'inherit',
-                    '&[data-active]': {
-                      color: 'var(--mantine-color-blue-6)',
-                    },
-                  },
-                }}
-              />
-              
-              <NavLink
-                href="#profile"
-                active={activeRoute === 'profile'}
-                label="Profile"
-                leftSection={<IconUser size={16} stroke={1.5} />}
-                onClick={() => handleNavigation('profile')}
-                styles={{
-                  root: {
-                    borderRadius: '6px',
-                    marginBottom: '4px',
-                    color: 'var(--mantine-color-text)',
-                    '&[data-active]': {
-                      backgroundColor: 'var(--mantine-color-blue-1)',
-                      color: 'var(--mantine-color-blue-6)',
-                    },
-                    '&:hover': {
-                      backgroundColor: 'var(--mantine-color-default-hover)',
-                    },
-                  },
-                  label: {
-                    color: 'inherit',
-                    '&[data-active]': {
-                      color: 'var(--mantine-color-blue-6)',
-                    },
-                  },
-                }}
-              />
-            </>
-          ) : (
-            <>
-              <Text size="sm" c="dimmed" mt="lg" mb="sm">Account</Text>
-              
-              <NavLink
-                href="#login"
-                active={activeRoute === 'login'}
-                label="Log In"
-                leftSection={<IconUser size={16} stroke={1.5} />}
-                onClick={() => handleNavigation('login')}
-                styles={{
-                  root: {
-                    borderRadius: '6px',
-                    marginBottom: '4px',
-                    color: 'var(--mantine-color-text)',
-                    '&[data-active]': {
-                      backgroundColor: 'var(--mantine-color-blue-1)',
-                      color: 'var(--mantine-color-blue-6)',
-                    },
-                    '&:hover': {
-                      backgroundColor: 'var(--mantine-color-default-hover)',
-                    },
-                  },
-                  label: {
-                    color: 'inherit',
-                    '&[data-active]': {
-                      color: 'var(--mantine-color-blue-6)',
-                    },
-                  },
-                }}
-              />
-              
-              <NavLink
-                href="#signup"
-                active={activeRoute === 'signup'}
-                label="Sign Up"
-                leftSection={<IconUser size={16} stroke={1.5} />}
-                onClick={() => handleNavigation('signup')}
-                styles={{
-                  root: {
-                    borderRadius: '6px',
-                    marginBottom: '4px',
-                    color: 'var(--mantine-color-text)',
-                    '&[data-active]': {
-                      backgroundColor: 'var(--mantine-color-blue-1)',
-                      color: 'var(--mantine-color-blue-6)',
-                    },
-                    '&:hover': {
-                      backgroundColor: 'var(--mantine-color-default-hover)',
-                    },
-                  },
-                  label: {
-                    color: 'inherit',
-                    '&[data-active]': {
-                      color: 'var(--mantine-color-blue-6)',
-                    },
-                  },
-                }}
-              />
-            </>
-          )}
+        <Box mt="md">
+          {navItems.map((item) => (
+            <NavLink
+              key={item.route}
+              active={currentRoute === item.route}
+              label={item.label}
+              leftSection={<item.icon size={16} />}
+              onClick={() => handleNavigation(item.route)}
+              color="gold"
+              style={{ borderRadius: 'var(--mantine-radius-md)', marginBottom: 4 }}
+            />
+          ))}
         </Box>
       </Drawer>
     </>
   );
 }
-
-export { Header };
-

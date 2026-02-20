@@ -39,7 +39,7 @@ export interface AuthState {
 
 export const useAuthStore = create<AuthState>()(
   persist(
-    (set, get) => ({
+    (set, _get) => ({
       // Initial state
       isAuthenticated: false,
       user: null,

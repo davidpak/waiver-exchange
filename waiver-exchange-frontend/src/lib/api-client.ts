@@ -6,10 +6,12 @@ import type {
   EquityHistoryResponse,
   OrderPlaceRequest,
   OrderPlaceResponse,
+  PositionsListResponse,
   PriceHistoryResponse,
   SnapshotResponse,
   SymbolInfoResponse,
   Timeframe,
+  TradesListResponse,
   WebSocketMessage
 } from '@/types/api';
 import { API_CONFIG } from '@/types/api';
@@ -96,6 +98,16 @@ class RestApiClient {
     if (endDate) params.append('end_date', endDate);
     
     return this.request<EquityHistoryResponse>(`/account/equity-history?${params}`);
+  }
+
+  // Account positions
+  async getPositions(accountId: number = 1): Promise<PositionsListResponse> {
+    return this.request<PositionsListResponse>(`/account/positions?account_id=${accountId}`);
+  }
+
+  // Account trade history
+  async getTrades(accountId: number = 1): Promise<TradesListResponse> {
+    return this.request<TradesListResponse>(`/account/trades?account_id=${accountId}`);
   }
 
   // Market Data

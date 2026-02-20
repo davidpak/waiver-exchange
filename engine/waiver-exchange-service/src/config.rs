@@ -199,10 +199,21 @@ fn load_from_env(config: &mut ServiceConfig) -> Result<()> {
 
 /// Validate configuration
 fn validate_config(config: &ServiceConfig) -> Result<()> {
+    // Resolve data directory to absolute path
+    let data_dir = if config.service.data_dir.is_relative() {
+        std::env::current_dir()
+            .context("Failed to get current directory")?
+            .join(&config.service.data_dir)
+    } else {
+        config.service.data_dir.clone()
+    };
+
+    tracing::info!("Data directory resolved to: {:?}", data_dir);
+
     // Validate data directory
-    if !config.service.data_dir.exists() {
-        std::fs::create_dir_all(&config.service.data_dir).with_context(|| {
-            format!("Failed to create data directory: {:?}", config.service.data_dir)
+    if !data_dir.exists() {
+        std::fs::create_dir_all(&data_dir).with_context(|| {
+            format!("Failed to create data directory: {:?}", data_dir)
         })?;
     }
 

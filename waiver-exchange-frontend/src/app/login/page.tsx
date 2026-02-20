@@ -25,14 +25,12 @@ import { useEffect, useState } from 'react';
 
 export default function LoginPage() {
   const router = useRouter();
-  const { 
-    isAuthenticated, 
-    setAuth, 
-    setWebSocketState, 
-    setSleeperSetup, 
+  const {
+    setAuth,
+    setWebSocketState,
+    setSleeperSetup,
     setAvailableLeagues,
     availableLeagues,
-    sleeperSetupComplete 
   } = useAuthStore();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -498,7 +496,7 @@ export default function LoginPage() {
                       cursor: isLoading ? 'not-allowed' : 'pointer',
                       opacity: isLoading ? 0.7 : 1,
                       transition: 'all 0.2s ease',
-                      fontFamily: 'var(--font-inter), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+                      fontFamily: 'inherit',
                       fontSize: '14px',
                       fontWeight: 500,
                       color: 'var(--mantine-color-text)',
