@@ -88,7 +88,7 @@ export function Holdings() {
                     width={16}
                     height={16}
                     style={{ objectFit: 'contain', flexShrink: 0 }}
-                    unoptimized
+                    loading="lazy"
                   />
                   <Box style={{ minWidth: 0 }}>
                     <Text fz={12} fw={500} truncate>

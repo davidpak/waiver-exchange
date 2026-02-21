@@ -182,7 +182,7 @@ const SearchResultRow = memo(function SearchResultRow({
             width={24}
             height={24}
             style={{ objectFit: 'contain' }}
-            unoptimized
+            loading="lazy"
           />
           <Box>
             <Text size="sm" fw={500}>

@@ -117,7 +117,7 @@ export function SymbolView({ onOrderPlaced }: SymbolViewProps) {
               width={20}
               height={20}
               style={{ objectFit: 'contain' }}
-              unoptimized
+              loading="lazy"
             />
             <Text
               fw={600}

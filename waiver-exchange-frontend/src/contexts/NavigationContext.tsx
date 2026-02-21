@@ -57,6 +57,8 @@ export function NavigationProvider({ children }: NavigationProviderProps) {
   useEffect(() => {
     if (pathname === '/market') {
       setCurrentRoute('market');
+    } else if (pathname === '/admin') {
+      setCurrentRoute('admin');
     } else if (pathname === '/') {
       setCurrentRoute('dashboard');
     }
@@ -96,6 +98,8 @@ export function NavigationProvider({ children }: NavigationProviderProps) {
       router.push('/market');
     } else if (route === 'dashboard') {
       router.push('/');
+    } else if (route === 'admin') {
+      router.push('/admin');
     } else if (route === 'login' || route === 'signup') {
       router.push('/login');
     }

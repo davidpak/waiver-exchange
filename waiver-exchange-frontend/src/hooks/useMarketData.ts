@@ -1,6 +1,8 @@
 'use client';
 
 import { apiClient } from '@/lib/api-client';
+import { cachePlayersToIDB, readPlayersFromIDB, type CachedPlayer } from '@/lib/dexie-db';
+import { supabase } from '@/lib/supabase';
 import type { SnapshotResponse, SymbolInfoResponse } from '@/types/api';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo } from 'react';
@@ -15,30 +17,50 @@ export const marketKeys = {
 };
 
 // ---------------------------------------------------------------------------
-// localStorage cache for player data
+// IndexedDB cache helpers (replaces localStorage)
 // ---------------------------------------------------------------------------
-const PLAYERS_CACHE_KEY = 'waiver-exchange-players';
 
-function readPlayersCache(): SymbolInfoResponse[] | undefined {
+async function readPlayersCache(): Promise<SymbolInfoResponse[] | undefined> {
   try {
-    const raw = localStorage.getItem(PLAYERS_CACHE_KEY);
-    if (!raw) return undefined;
-    return JSON.parse(raw) as SymbolInfoResponse[];
+    const cached = await readPlayersFromIDB();
+    if (!cached.length) return undefined;
+
+    // Map CachedPlayer back to SymbolInfoResponse shape
+    return cached.map((p) => ({
+      player_id: p.player_id,
+      name: p.name,
+      position: p.position,
+      team: p.team,
+      projected_points: p.projected_points ?? 0,
+      rank: p.rank ?? 0,
+      symbol_id: p.symbol_id ?? 0,
+      last_updated: p.last_updated ?? '',
+    }));
   } catch {
     return undefined;
   }
 }
 
-function writePlayersCache(players: SymbolInfoResponse[]) {
-  try {
-    localStorage.setItem(PLAYERS_CACHE_KEY, JSON.stringify(players));
-  } catch {
-    // localStorage full or unavailable — silently ignore
-  }
+function writePlayersCache(players: SymbolInfoResponse[]): void {
+  const mapped: CachedPlayer[] = players.map((p) => ({
+    player_id: p.player_id,
+    name: p.name,
+    position: p.position,
+    team: p.team,
+    projected_points: p.projected_points,
+    rank: p.rank,
+    symbol_id: p.symbol_id,
+    last_updated: p.last_updated,
+  }));
+
+  // Fire-and-forget — async write to IndexedDB
+  cachePlayersToIDB(mapped).catch(() => {
+    // IndexedDB unavailable — silently ignore
+  });
 }
 
 // ---------------------------------------------------------------------------
-// Shared queryFn — fetches players and persists to localStorage
+// Shared queryFn — fetches players and persists to IndexedDB
 // ---------------------------------------------------------------------------
 async function fetchAndCachePlayers(): Promise<SymbolInfoResponse[]> {
   const players = await apiClient.rest.getAllPlayers();
@@ -47,7 +69,7 @@ async function fetchAndCachePlayers(): Promise<SymbolInfoResponse[]> {
 }
 
 // ---------------------------------------------------------------------------
-// useAllPlayers — seeded from localStorage, fetched once, cached forever
+// useAllPlayers — seeded from IndexedDB, fetched once, cached forever
 // ---------------------------------------------------------------------------
 export function useAllPlayers() {
   return useQuery<SymbolInfoResponse[]>({
@@ -59,12 +81,24 @@ export function useAllPlayers() {
 }
 
 // ---------------------------------------------------------------------------
-// useBulkPrices — shared price query with configurable refetch
+// useBulkPrices — reads fair prices directly from Supabase rpe_fair_prices
 // ---------------------------------------------------------------------------
 export function useBulkPrices(refetchInterval = 2000) {
   return useQuery<{ prices: Record<string, number> }>({
     queryKey: marketKeys.bulkPrices,
-    queryFn: () => apiClient.rest.getAllPrices(),
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('rpe_fair_prices')
+        .select('player_id, fair_cents');
+
+      if (error) throw error;
+
+      const prices: Record<string, number> = {};
+      for (const row of data ?? []) {
+        prices[(row as any).player_id.toString()] = (row as any).fair_cents;
+      }
+      return { prices };
+    },
     refetchInterval,
     staleTime: Math.max(refetchInterval / 2, 500),
   });
@@ -74,7 +108,6 @@ export function useBulkPrices(refetchInterval = 2000) {
 // usePlayerSearch — pure local filter over cached players (zero network)
 // ---------------------------------------------------------------------------
 
-// Pre-computed search entry to avoid repeated .toLowerCase() calls
 interface SearchEntry {
   player: SymbolInfoResponse;
   nameLower: string;
@@ -85,7 +118,6 @@ interface SearchEntry {
 export function usePlayerSearch(query: string, limit = 10) {
   const { data: allPlayers } = useAllPlayers();
 
-  // Build search index once when player data loads (not on every keystroke)
   const searchIndex = useMemo<SearchEntry[]>(() => {
     if (!allPlayers) return [];
     return allPlayers.map((p) => ({
@@ -131,23 +163,24 @@ export function useCurrentSnapshot() {
 }
 
 // ---------------------------------------------------------------------------
-// Prefetch helper — seeds cache from localStorage, then fetches in background
+// Prefetch helper — seeds cache from IndexedDB, then fetches in background
 // ---------------------------------------------------------------------------
 export function usePrefetchMarketData() {
   const queryClient = useQueryClient();
 
   useEffect(() => {
-    // 1. Seed React Query from localStorage so widgets render immediately
-    const cached = readPlayersCache();
-    if (cached) {
-      queryClient.setQueryData(marketKeys.allPlayers, cached);
-    }
+    // 1. Seed React Query from IndexedDB so widgets render immediately
+    readPlayersCache().then((cached) => {
+      if (cached) {
+        queryClient.setQueryData(marketKeys.allPlayers, cached);
+      }
+    });
 
-    // 2. Always fetch fresh data in background (updates localStorage on success)
+    // 2. Always fetch fresh data in background (updates IndexedDB on success)
     queryClient.fetchQuery({
       queryKey: marketKeys.allPlayers,
       queryFn: fetchAndCachePlayers,
-      staleTime: 0, // force fetch regardless of cache state
+      staleTime: 0,
     });
   }, [queryClient]);
 }

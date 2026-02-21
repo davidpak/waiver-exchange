@@ -14,9 +14,9 @@ use waiver_exchange_service::{
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Environment variables should be set by the deployment platform
-    // For development, set them manually: $env:DATABASE_URL="..."
-    
+    // Load .env file from project root (walks up directories to find it)
+    dotenv::dotenv().ok();
+
     // Initialize logging first
     initialize_logging()?;
 

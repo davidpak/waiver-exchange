@@ -3,21 +3,34 @@
 import { ErrorBoundary } from '@/components/common/ErrorBoundary';
 import { AppShellLayout } from '@/components/layout/AppShell';
 import { AccountSummary } from '@/components/widgets/AccountSummary';
-import { CommandPalette } from '@/components/widgets/CommandPalette';
-import { EquityChart } from '@/components/widgets/EquityChart';
 import { Holdings } from '@/components/widgets/Holdings';
 import { OpenOrders, type TrackedOrder } from '@/components/widgets/OpenOrders';
 import { OrderBook } from '@/components/widgets/OrderBook';
 import { OrderEntry } from '@/components/widgets/OrderEntry';
-import {
-  OrderNotification,
-  useOrderNotifications,
-} from '@/components/widgets/OrderNotification';
+import { useOrderNotifications } from '@/components/widgets/OrderNotification';
 import { SymbolView } from '@/components/widgets/SymbolView';
-import { TradeHistory } from '@/components/widgets/TradeHistory';
 import { useTrading } from '@/contexts/TradingContext';
-import { Box, Tabs, Text } from '@mantine/core';
+import { Box, Skeleton, Tabs, Text } from '@mantine/core';
+import dynamic from 'next/dynamic';
 import { useCallback, useState } from 'react';
+
+// Lazy-load components not visible on initial render
+const CommandPalette = dynamic(
+  () => import('@/components/widgets/CommandPalette').then((m) => m.CommandPalette),
+  { ssr: false }
+);
+const OrderNotification = dynamic(
+  () => import('@/components/widgets/OrderNotification').then((m) => m.OrderNotification),
+  { ssr: false }
+);
+const TradeHistory = dynamic(
+  () => import('@/components/widgets/TradeHistory').then((m) => m.TradeHistory),
+  { ssr: false }
+);
+const EquityChart = dynamic(
+  () => import('@/components/widgets/EquityChart').then((m) => m.EquityChart),
+  { ssr: false, loading: () => <Skeleton height={120} /> }
+);
 
 export default function Home() {
   const {

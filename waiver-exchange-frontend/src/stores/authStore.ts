@@ -16,20 +16,24 @@ export interface AuthState {
   user: User | null;
   token: string | null;
   accountId: string | null;
-  
+
+  // Auth provider tracking
+  authProvider: 'legacy' | 'supabase' | null;
+
   // Sleeper integration state
   sleeperSetupComplete: boolean;
   sleeperUsername: string | null;
   sleeperLeagueId: string | null;
   sleeperRosterId: string | null;
   availableLeagues: any[] | null;
-  
+
   // WebSocket connection state
   wsConnected: boolean;
   wsAuthenticated: boolean;
-  
+
   // Actions
   setAuth: (user: User, token: string, accountId: string) => void;
+  setAuthProvider: (provider: 'legacy' | 'supabase') => void;
   setSleeperSetup: (username: string, leagueId: string, rosterId: string) => void;
   setAvailableLeagues: (leagues: any[] | null) => void;
   setWebSocketState: (connected: boolean, authenticated: boolean) => void;
@@ -45,6 +49,7 @@ export const useAuthStore = create<AuthState>()(
       user: null,
       token: null,
       accountId: null,
+      authProvider: null,
       sleeperSetupComplete: false,
       sleeperUsername: null,
       sleeperLeagueId: null,
@@ -61,6 +66,10 @@ export const useAuthStore = create<AuthState>()(
           token,
           accountId,
         });
+      },
+
+      setAuthProvider: (provider: 'legacy' | 'supabase') => {
+        set({ authProvider: provider });
       },
 
       setSleeperSetup: (username: string, leagueId: string, rosterId: string) => {
@@ -89,13 +98,14 @@ export const useAuthStore = create<AuthState>()(
         // Clear localStorage
         localStorage.removeItem('waiver_exchange_token');
         localStorage.removeItem('waiver_exchange_user');
-        
+
         // Reset state
         set({
           isAuthenticated: false,
           user: null,
           token: null,
           accountId: null,
+          authProvider: null,
           sleeperSetupComplete: false,
           sleeperUsername: null,
           sleeperLeagueId: null,
@@ -124,6 +134,7 @@ export const useAuthStore = create<AuthState>()(
         user: state.user,
         token: state.token,
         accountId: state.accountId,
+        authProvider: state.authProvider,
         sleeperSetupComplete: state.sleeperSetupComplete,
         sleeperUsername: state.sleeperUsername,
         sleeperLeagueId: state.sleeperLeagueId,

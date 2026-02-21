@@ -23,6 +23,7 @@ import {
   IconDashboard,
   IconLayoutList,
   IconSearch,
+  IconSettings,
   IconUser,
   IconWifi,
   IconWifiOff,
@@ -32,7 +33,7 @@ import { useCallback, useMemo } from 'react';
 export function Header() {
   const [drawerOpen, { toggle: toggleDrawer, close: closeDrawer }] = useDisclosure(false);
   const { currentRoute, navigate } = useNavigation();
-  const { isAuthenticated } = useAuthStore();
+  const { isAuthenticated, user } = useAuthStore();
   const { connected } = useWebSocket();
   const { openSearch } = useTrading();
 
@@ -50,6 +51,7 @@ export function Header() {
     () => [
       { route: 'dashboard', label: 'Dashboard', icon: IconDashboard },
       { route: 'market', label: 'Markets', icon: IconLayoutList },
+      { route: 'admin', label: 'Admin', icon: IconSettings },
     ],
     []
   );
@@ -146,7 +148,9 @@ export function Header() {
               <AccountInfoPopover>
                 <Avatar
                   size={28}
-                  radius="sm"
+                  radius="xl"
+                  src={user?.picture}
+                  alt={user?.name}
                   color="dark"
                   variant="filled"
                   style={{ cursor: 'pointer' }}

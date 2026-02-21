@@ -23,6 +23,7 @@ use uuid;
 pub struct Account {
     pub id: i64,
     pub google_id: Option<String>,
+    pub supabase_uid: Option<uuid::Uuid>,
     pub sleeper_user_id: Option<String>,
     pub sleeper_roster_id: Option<String>,
     pub sleeper_league_id: Option<String>,
@@ -187,6 +188,24 @@ impl AccountService {
         }
 
         Err(AccountServiceError::AccountNotFound { account_id: 0 })
+    }
+
+    /// Get account ID by Supabase UID (used for Supabase Auth JWT validation)
+    pub async fn get_account_by_supabase_uid(&self, supabase_uid: &str) -> Result<i64> {
+        let uid = uuid::Uuid::parse_str(supabase_uid)
+            .map_err(|e| AccountServiceError::Internal { message: format!("Invalid UUID: {}", e) })?;
+
+        let row = sqlx::query!(
+            "SELECT id FROM accounts WHERE supabase_uid = $1",
+            uid
+        )
+        .fetch_optional(&self.db_pool)
+        .await?;
+
+        match row {
+            Some(r) => Ok(r.id),
+            None => Err(AccountServiceError::AccountNotFound { account_id: 0 }),
+        }
     }
 
     /// Get account by ID

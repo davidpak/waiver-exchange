@@ -1,48 +1,42 @@
-import atlantaFalconsLogo from '@/assets/atlanta-falcons-logo.png';
-import buffaloBillsLogo from '@/assets/buffalo-bills-logo.png';
-import carolinaPanthersLogo from '@/assets/carolina-panthers-logo.png';
-import chicagoBearsLogo from '@/assets/chicago-bears-logo.png';
-import clevelandBrownsLogo from '@/assets/cleveland-browns-logo.png';
-import dallasCowboysLogo from '@/assets/dallas-cowboys-logo.png';
-import denverBroncosLogo from '@/assets/denver-broncos-logo.png';
-import detroitLionsLogo from '@/assets/detroit-lions-logo.png';
-import greenBayPackersLogo from '@/assets/green-bay-packers-logo.png';
-import kansasCityChiefsLogo from '@/assets/kansas-city-chiefs-logo.png';
-import miamiDolphinsLogo from '@/assets/miami-dolphins-logo.png';
-import minnesotaVikingsLogo from '@/assets/minnesota-vikings-logo.png';
-import newEnglandPatriotsLogo from '@/assets/new-england-patriots-logo.png';
-import newOrleansSaintsLogo from '@/assets/new-orleans-saints-logo.png';
-import newYorkGiantsLogo from '@/assets/new-york-giants-logo.png';
-import philadelphiaEaglesLogo from '@/assets/philadelphia-eagles-logo.png';
-import pittsburghSteelersLogo from '@/assets/pittsburgh-steelers-logo.png';
-import placeholderLogo from '@/assets/placeholder-logo.jpg';
-import seattleSeahawksLogo from '@/assets/seattle-seahawks-logo.png';
-import washingtonCommandersLogo from '@/assets/washington-commanders-logo.png';
-
 const teamLogos: Record<string, string> = {
-  ATL: atlantaFalconsLogo.src,
-  BUF: buffaloBillsLogo.src,
-  CAR: carolinaPanthersLogo.src,
-  CHI: chicagoBearsLogo.src,
-  CLE: clevelandBrownsLogo.src,
-  DAL: dallasCowboysLogo.src,
-  DEN: denverBroncosLogo.src,
-  DET: detroitLionsLogo.src,
-  GB: greenBayPackersLogo.src,
-  KC: kansasCityChiefsLogo.src,
-  MIA: miamiDolphinsLogo.src,
-  MIN: minnesotaVikingsLogo.src,
-  NE: newEnglandPatriotsLogo.src,
-  NO: newOrleansSaintsLogo.src,
-  NYG: newYorkGiantsLogo.src,
-  PHI: philadelphiaEaglesLogo.src,
-  PIT: pittsburghSteelersLogo.src,
-  SEA: seattleSeahawksLogo.src,
-  WAS: washingtonCommandersLogo.src,
+  ARI: '/teams/arizona-cardinals-logo.png',
+  ATL: '/teams/atlanta-falcons-logo.png',
+  BAL: '/teams/baltimore-ravens-logo.png',
+  BUF: '/teams/buffalo-bills-logo.png',
+  CAR: '/teams/carolina-panthers-logo.png',
+  CHI: '/teams/chicago-bears-logo.png',
+  CIN: '/teams/cincinnati-bengals-logo.png',
+  CLE: '/teams/cleveland-browns-logo.png',
+  DAL: '/teams/dallas-cowboys-logo.png',
+  DEN: '/teams/denver-broncos-logo.png',
+  DET: '/teams/detroit-lions-logo.png',
+  GB: '/teams/green-bay-packers-logo.png',
+  HOU: '/teams/houston-texans-logo.png',
+  IND: '/teams/indianapolis-colts-logo.png',
+  JAX: '/teams/jacksonville-jaguars-logo.png',
+  KC: '/teams/kansas-city-chiefs-logo.png',
+  LAC: '/teams/los-angeles-chargers-logo.png',
+  LAR: '/teams/los-angeles-rams-logo.png',
+  LV: '/teams/las-vegas-raiders-logo.png',
+  MIA: '/teams/miami-dolphins-logo.png',
+  MIN: '/teams/minnesota-vikings-logo.png',
+  NE: '/teams/new-england-patriots-logo.png',
+  NO: '/teams/new-orleans-saints-logo.png',
+  NYG: '/teams/new-york-giants-logo.png',
+  NYJ: '/teams/new-york-jets-logo.png',
+  PHI: '/teams/philadelphia-eagles-logo.png',
+  PIT: '/teams/pittsburgh-steelers-logo.png',
+  SEA: '/teams/seattle-seahawks-logo.png',
+  SF: '/teams/san-francisco-49ers-logo.png',
+  TB: '/teams/tampa-bay-buccaneers-logo.png',
+  TEN: '/teams/tennessee-titans-logo.png',
+  WAS: '/teams/washington-commanders-logo.png',
 };
 
+const PLACEHOLDER = '/teams/placeholder-logo.jpg';
+
 export const getTeamLogo = (teamAbbreviation: string): string => {
-  return teamLogos[teamAbbreviation.toUpperCase()] || placeholderLogo.src;
+  return teamLogos[teamAbbreviation.toUpperCase()] || PLACEHOLDER;
 };
 
 export const getTeamLogoWithFallback = getTeamLogo;

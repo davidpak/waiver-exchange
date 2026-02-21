@@ -16,7 +16,13 @@ const nextConfig: NextConfig = {
     esmExternals: true,
     optimizeCss: true,
     // Tree-shake Mantine + Tabler icons
-    optimizePackageImports: ['@mantine/core', '@mantine/hooks', '@tabler/icons-react'],
+    optimizePackageImports: [
+      '@mantine/core',
+      '@mantine/hooks',
+      '@tabler/icons-react',
+      'framer-motion',
+      '@tanstack/react-query',
+    ],
   },
 
   turbopack: {

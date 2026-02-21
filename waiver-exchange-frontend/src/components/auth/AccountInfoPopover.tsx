@@ -69,7 +69,7 @@ export function AccountInfoPopover({ children }: AccountInfoPopoverProps) {
         <Stack gap="md">
           {/* Header */}
           <Group gap="sm">
-            <Avatar size="lg" radius="xl" color="dark" variant="filled">
+            <Avatar size="lg" radius="xl" src={user?.picture} alt={user?.name} color="dark" variant="filled">
               <IconUser size={20} />
             </Avatar>
             <Box style={{ flex: 1 }}>

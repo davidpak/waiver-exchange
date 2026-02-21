@@ -101,7 +101,7 @@ function StatsPanel({
                   width={16}
                   height={16}
                   style={{ objectFit: 'contain', flexShrink: 0 }}
-                  unoptimized
+                  loading="lazy"
                 />
                 <Text
                   size="xs"

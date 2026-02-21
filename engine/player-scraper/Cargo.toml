@@ -22,9 +22,5 @@ name = "scrape_players"
 path = "src/bin/scrape_players.rs"
 
 [[bin]]
-name = "scrape_weekly_stats"
-path = "src/bin/scrape_weekly_stats.rs"
-
-[[bin]]
 name = "scrape_all_weeks"
 path = "src/bin/scrape_all_weeks.rs"

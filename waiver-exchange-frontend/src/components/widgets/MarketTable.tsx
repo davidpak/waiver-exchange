@@ -39,8 +39,8 @@ export function MarketTable({ onSymbolSelect }: MarketTableProps) {
   const [posFilter, setPosFilter] = useState<string>('ALL');
   const [page, setPage] = useState(1);
   const [sort, setSort] = useState<{ field: SortField; dir: SortDir }>({
-    field: 'rank',
-    dir: 'asc',
+    field: 'price',
+    dir: 'desc',
   });
 
   const { data: allPlayers, isLoading: playersLoading } = useAllPlayers();
@@ -196,7 +196,7 @@ export function MarketTable({ onSymbolSelect }: MarketTableProps) {
                         width={24}
                         height={24}
                         style={{ objectFit: 'contain' }}
-                        unoptimized
+                        loading="lazy"
                       />
                       <Text size="sm" fw={500}>
                         {player.name}

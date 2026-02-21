@@ -1,6 +1,7 @@
 'use client';
 
-import placeholderLogo from '@/assets/placeholder-logo.jpg';
+const placeholderLogo = '/teams/placeholder-logo.jpg';
+import { supabase } from '@/lib/supabase';
 import { getWebSocketClient } from '@/lib/websocket-client';
 import { useAuthStore } from '@/stores/authStore';
 import {
@@ -23,10 +24,15 @@ import Image from 'next/image';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 
+// Feature flag: when true, use Supabase Auth; when false, use legacy OAuth popup
+const USE_SUPABASE_AUTH = process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
 export default function LoginPage() {
   const router = useRouter();
   const {
+    isAuthenticated,
     setAuth,
+    setAuthProvider,
     setWebSocketState,
     setSleeperSetup,
     setAvailableLeagues,
@@ -39,49 +45,147 @@ export default function LoginPage() {
   const [sleeperUsername, setSleeperUsername] = useState('');
   const [sleeperStep, setSleeperStep] = useState<'username' | 'leagues' | 'complete'>('username');
 
-  // Don't auto-redirect - let user choose when to continue
-  // useEffect(() => {
-  //   if (isAuthenticated) {
-  //     router.push('/');
-  //   }
-  // }, [isAuthenticated, router]);
-
-  // Check for existing authentication on mount
+  // Check for existing Supabase session on mount
   useEffect(() => {
-    const checkExistingAuth = () => {
-      const storedToken = localStorage.getItem('waiver_exchange_token');
-      const storedUser = localStorage.getItem('waiver_exchange_user');
-      
-      if (storedToken && storedUser) {
-        try {
-          const user = JSON.parse(storedUser);
-          setAuth(user, storedToken, user.id);
+    async function checkSession() {
+      if (USE_SUPABASE_AUTH) {
+        const { data } = await supabase.auth.getSession();
+        if (data.session) {
+          const user = data.session.user;
+          const metadata = user.user_metadata;
+
+          // Fetch account_id from accounts table
+          const { data: account } = await supabase
+            .from('accounts')
+            .select('id, fantasy_points, currency_balance')
+            .eq('supabase_uid', user.id)
+            .single() as { data: { id: number; fantasy_points: number | null; currency_balance: number | null } | null; error: unknown };
+
+          const accountId = account?.id?.toString() ?? user.id;
+
+          setAuth(
+            {
+              id: accountId,
+              name: metadata.full_name ?? metadata.name ?? 'User',
+              email: user.email ?? '',
+              picture: metadata.avatar_url ?? metadata.picture,
+              fantasy_points: account?.fantasy_points ?? undefined,
+              currency_balance_dollars: account?.currency_balance
+                ? account.currency_balance / 100
+                : undefined,
+            },
+            data.session.access_token,
+            accountId
+          );
+          setAuthProvider('supabase');
           setStatus('Found existing authentication');
-          // Don't auto-redirect - let user choose when to continue
-          // router.push('/dashboard');
-        } catch (error) {
-          console.error('Error parsing stored user data:', error);
-          localStorage.removeItem('waiver_exchange_token');
-          localStorage.removeItem('waiver_exchange_user');
+
+          // Connect WebSocket with Supabase JWT
+          connectWebSocket(data.session.access_token);
+        }
+      } else {
+        // Legacy: check localStorage
+        const storedToken = localStorage.getItem('waiver_exchange_token');
+        const storedUser = localStorage.getItem('waiver_exchange_user');
+        if (storedToken && storedUser) {
+          try {
+            const user = JSON.parse(storedUser);
+            setAuth(user, storedToken, user.id);
+            setAuthProvider('legacy');
+            setStatus('Found existing authentication');
+          } catch (err) {
+            console.error('Error parsing stored user data:', err);
+            localStorage.removeItem('waiver_exchange_token');
+            localStorage.removeItem('waiver_exchange_user');
+          }
         }
       }
-    };
+    }
 
-    checkExistingAuth();
-  }, [setAuth, router]);
+    checkSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Listen for Supabase auth state changes
+  useEffect(() => {
+    if (!USE_SUPABASE_AUTH) return;
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        if (event === 'SIGNED_IN' && session) {
+          const user = session.user;
+          const metadata = user.user_metadata;
+
+          const { data: account } = await supabase
+            .from('accounts')
+            .select('id, fantasy_points, currency_balance')
+            .eq('supabase_uid', user.id)
+            .single() as { data: { id: number; fantasy_points: number | null; currency_balance: number | null } | null; error: unknown };
+
+          const accountId = account?.id?.toString() ?? user.id;
+
+          setAuth(
+            {
+              id: accountId,
+              name: metadata.full_name ?? metadata.name ?? 'User',
+              email: user.email ?? '',
+              picture: metadata.avatar_url ?? metadata.picture,
+              fantasy_points: account?.fantasy_points ?? undefined,
+              currency_balance_dollars: account?.currency_balance
+                ? account.currency_balance / 100
+                : undefined,
+            },
+            session.access_token,
+            accountId
+          );
+          setAuthProvider('supabase');
+          setActiveStep(2);
+          setStatus('OAuth authentication successful!');
+          setIsLoading(false);
+
+          // Connect WebSocket with Supabase JWT
+          connectWebSocket(session.access_token);
+        } else if (event === 'SIGNED_OUT') {
+          useAuthStore.getState().logout();
+        }
+      }
+    );
+
+    return () => subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const handleGoogleLogin = async () => {
     setIsLoading(true);
     setError(null);
     setStatus('Opening Google OAuth...');
-    setActiveStep(1); // Move to OAuth step
+    setActiveStep(1);
 
+    if (USE_SUPABASE_AUTH) {
+      // Supabase OAuth flow — redirects to Google, then back to /auth/callback
+      const { error: oauthError } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: {
+          redirectTo: `${window.location.origin}/auth/callback`,
+        },
+      });
+
+      if (oauthError) {
+        setError(oauthError.message);
+        setStatus('OAuth failed');
+        setIsLoading(false);
+        setActiveStep(0);
+      }
+      // Page will redirect — no further action needed here
+      return;
+    }
+
+    // Legacy OAuth popup flow
     try {
-      // Open OAuth popup window
       const oauthUrl = 'http://localhost:8082/auth/google';
       const oauthWindow = window.open(
-        oauthUrl, 
-        'oauth', 
+        oauthUrl,
+        'oauth',
         'width=600,height=600,scrollbars=yes,resizable=yes'
       );
 
@@ -89,335 +193,306 @@ export default function LoginPage() {
         throw new Error('Popup blocked. Please allow popups for this site.');
       }
 
-               // Listen for OAuth success message from popup
-               const messageListener = (event: MessageEvent) => {
-                 if (event.data && event.data.type === 'oauth_success') {
-                   setStatus('OAuth authentication successful!');
-                   setActiveStep(2); // Move to Sleeper integration step
-                   
-                   // Store the token and user info
-                   const { token, user } = event.data;
-                   localStorage.setItem('waiver_exchange_token', token);
-                   
-                   // Use the actual user info from OAuth (includes email!)
-                   const oauthUser = {
-                     id: 'temp', // Will be replaced with actual user_id from WebSocket
-                     name: user?.name || 'User',
-                     email: user?.email || 'user@example.com'
-                   };
-                   localStorage.setItem('waiver_exchange_user', JSON.stringify(oauthUser));
-                   
-                   // Update auth store with OAuth user info
-                   setAuth(oauthUser, token, oauthUser.id);
-                   
-                   // Remove the message listener
-                   window.removeEventListener('message', messageListener);
-                   
-                   // Clear the window close check since we got the token
-                   clearInterval(checkClosed);
-                   
-                   // Connect to WebSocket and authenticate
-                   connectWebSocket(token);
-                 }
-               };
+      const messageListener = (event: MessageEvent) => {
+        if (event.data && event.data.type === 'oauth_success') {
+          setStatus('OAuth authentication successful!');
+          setActiveStep(2);
 
-      // Add message listener
+          const { token, user } = event.data;
+          localStorage.setItem('waiver_exchange_token', token);
+
+          const oauthUser = {
+            id: 'temp',
+            name: user?.name || 'User',
+            email: user?.email || 'user@example.com'
+          };
+          localStorage.setItem('waiver_exchange_user', JSON.stringify(oauthUser));
+
+          setAuth(oauthUser, token, oauthUser.id);
+          setAuthProvider('legacy');
+
+          window.removeEventListener('message', messageListener);
+          clearInterval(checkClosed);
+
+          connectWebSocket(token);
+        }
+      };
+
       window.addEventListener('message', messageListener);
 
-      // Listen for OAuth completion (fallback)
       const checkClosed = setInterval(() => {
         if (oauthWindow.closed) {
           clearInterval(checkClosed);
           window.removeEventListener('message', messageListener);
-          
-          // Only show error if we haven't already received the token
+
           if (!localStorage.getItem('waiver_exchange_token')) {
             setError('OAuth window was closed. Please try again.');
             setStatus('OAuth cancelled');
             setIsLoading(false);
-            setActiveStep(0); // Reset to first step
+            setActiveStep(0);
           }
         }
       }, 1000);
 
-    } catch (error) {
-      console.error('OAuth error:', error);
-      setError(error instanceof Error ? error.message : 'OAuth failed');
+    } catch (err) {
+      console.error('OAuth error:', err);
+      setError(err instanceof Error ? err.message : 'OAuth failed');
       setStatus('OAuth failed');
       setIsLoading(false);
-      setActiveStep(0); // Reset to first step
+      setActiveStep(0);
     }
   };
 
-         const connectWebSocket = async (token: string) => {
-           try {
-             setStatus('Connecting to trading system...');
-             
-             const wsClient = getWebSocketClient();
-             await wsClient.connect();
-             
-             setStatus('Authenticating with trading system...');
-             
-             // Set up message handler to capture the JWT auth response
-             const authPromise = new Promise<{ authenticated: boolean; user_id?: string }>((resolve, reject) => {
-               // Use the WebSocket client's message handling system
-               const messageHandler = (message: any) => {
-                 console.log('WebSocket message received:', message);
-                 
-                   // Handle authentication response - this is where we get the user_id!
-                   if (message.id === 'auth_jwt_001' && message.result) {
-                     if (message.result.authenticated) {
-                       const userId = message.result.user_id;
-                       console.log(`Authentication successful! User ID: ${userId}`);
-                       
-                       // Get existing user info from localStorage (preserves OAuth name/email)
-                       const existingUserStr = localStorage.getItem('waiver_exchange_user');
-                       let existingUser = { name: 'User', email: 'user@example.com' };
-                       if (existingUserStr) {
-                         try {
-                           existingUser = JSON.parse(existingUserStr);
-                         } catch (error) {
-                           console.error('Error parsing existing user data:', error);
-                         }
-                       }
-                       
-                       // Update auth store with real user ID but preserve OAuth user info
-                       const updatedUser = {
-                         id: userId,
-                         name: existingUser.name || 'User',
-                         email: existingUser.email || 'user@example.com'
-                       };
-                       localStorage.setItem('waiver_exchange_user', JSON.stringify(updatedUser));
-                       setAuth(updatedUser, token, userId);
-                       
-                       setWebSocketState(true, true);
-                       resolve({ authenticated: true, user_id: userId });
-                     } else {
-                       reject(new Error('Authentication failed: ' + (message.result.error || 'Unknown error')));
-                     }
-                   }
-               };
-               
-               // Register the message handler
-               wsClient['messageHandlers'].set('auth_jwt_001', messageHandler);
-             });
-             
-             // Send JWT authentication
-             wsClient.send({
-               method: 'auth.jwt',
-               params: { token },
-               id: 'auth_jwt_001'
-             });
-             
-             // Wait for authentication response
-             const authResult = await authPromise;
-             
-             if (authResult.authenticated) {
-               setStatus('Authentication complete!');
-               setIsLoading(false);
-               
-               // Now check Sleeper integration status
-               checkSleeperIntegrationStatus();
-             }
-           } catch (error) {
-             console.error('WebSocket connection error:', error);
-             setError('Failed to connect to trading system');
-             setStatus('Connection failed');
-             setIsLoading(false);
-             setActiveStep(0); // Reset to first step
-           }
-         };
+  const connectWebSocket = async (token: string) => {
+    try {
+      setStatus('Connecting to trading system...');
 
-    const handleContinueAsGuest = () => {
-      router.push('/');
-    };
-
-    const handleContinueToDashboard = () => {
-      // Update the user data with real information from the backend (preserve OAuth info)
       const wsClient = getWebSocketClient();
-      wsClient.checkSleeperIntegration().then((response) => {
-        if (response.result?.user_id) {
-          // Get existing user info from localStorage (preserves OAuth name/email)
-          const existingUserStr = localStorage.getItem('waiver_exchange_user');
-          let existingUser = { name: 'User', email: 'user@example.com' };
-          if (existingUserStr) {
-            try {
-              existingUser = JSON.parse(existingUserStr);
-            } catch (error) {
-              console.error('Error parsing existing user data:', error);
+      await wsClient.connect();
+
+      setStatus('Authenticating with trading system...');
+
+      const authPromise = new Promise<{ authenticated: boolean; user_id?: string }>((resolve, reject) => {
+        const messageHandler = (message: any) => {
+          console.log('WebSocket message received:', message);
+
+          if (message.id === 'auth_jwt_001' && message.result) {
+            if (message.result.authenticated) {
+              const userId = message.result.user_id;
+              console.log(`Authentication successful! User ID: ${userId}`);
+
+              // Preserve existing user data from auth store (set by Supabase callback)
+              const currentAuth = useAuthStore.getState();
+              const currentUser = currentAuth.user;
+
+              if (currentUser && currentUser.email && currentUser.email !== 'user@example.com') {
+                // Supabase auth already set good user data, just update the account ID
+                setAuth(
+                  { ...currentUser, id: userId },
+                  token,
+                  userId
+                );
+              } else {
+                // Legacy fallback: read from localStorage
+                const existingUserStr = localStorage.getItem('waiver_exchange_user');
+                let existingUser = { name: 'User', email: 'user@example.com' };
+                if (existingUserStr) {
+                  try {
+                    existingUser = JSON.parse(existingUserStr);
+                  } catch (parseErr) {
+                    console.error('Error parsing existing user data:', parseErr);
+                  }
+                }
+
+                const updatedUser = {
+                  id: userId,
+                  name: existingUser.name || 'User',
+                  email: existingUser.email || 'user@example.com'
+                };
+                localStorage.setItem('waiver_exchange_user', JSON.stringify(updatedUser));
+                setAuth(updatedUser, token, userId);
+              }
+
+              setWebSocketState(true, true);
+              resolve({ authenticated: true, user_id: userId });
+            } else {
+              reject(new Error('Authentication failed: ' + (message.result.error || 'Unknown error')));
             }
           }
-          
-               const updatedUser = {
-                 id: response.result.user_id,
-                 name: existingUser.name || 'User',
-                 email: existingUser.email || 'user@example.com', // Keep OAuth email, no email from account.info
-                 fantasy_points: response.result.fantasy_points,
-                 currency_balance_dollars: response.result.currency_balance_dollars
-               };
-          localStorage.setItem('waiver_exchange_user', JSON.stringify(updatedUser));
-          setAuth(updatedUser, localStorage.getItem('waiver_exchange_token') || '', updatedUser.id);
+        };
+
+        wsClient['messageHandlers'].set('auth_jwt_001', messageHandler);
+      });
+
+      wsClient.send({
+        method: 'auth.jwt',
+        params: { token },
+        id: 'auth_jwt_001'
+      });
+
+      const authResult = await authPromise;
+
+      if (authResult.authenticated) {
+        setStatus('Authentication complete!');
+        setIsLoading(false);
+
+        checkSleeperIntegrationStatus();
+      }
+    } catch (err) {
+      console.error('WebSocket connection error:', err);
+      setError('Failed to connect to trading system');
+      setStatus('Connection failed');
+      setIsLoading(false);
+      setActiveStep(0);
+    }
+  };
+
+  const handleContinueAsGuest = () => {
+    router.push('/');
+  };
+
+  const handleContinueToDashboard = () => {
+    const wsClient = getWebSocketClient();
+    wsClient.checkSleeperIntegration().then((response) => {
+      if (response.result?.user_id) {
+        // Preserve existing auth store data (set by Supabase callback)
+        const currentAuth = useAuthStore.getState();
+        const currentUser = currentAuth.user;
+        const currentToken = currentAuth.token;
+
+        const updatedUser = {
+          id: response.result.user_id,
+          name: currentUser?.name || 'User',
+          email: currentUser?.email || 'user@example.com',
+          picture: currentUser?.picture,
+          fantasy_points: response.result.fantasy_points,
+          currency_balance_dollars: response.result.currency_balance_dollars
+        };
+        setAuth(updatedUser, currentToken || '', updatedUser.id);
+      }
+    }).catch(console.error);
+
+    router.push('/');
+  };
+
+  const checkSleeperIntegrationStatus = async () => {
+    try {
+      setStatus('Checking Sleeper integration...');
+      const wsClient = getWebSocketClient();
+
+      const response = await wsClient.sendWithResponse({
+        id: 'check_sleeper_001',
+        method: 'account.info',
+        params: {}
+      });
+
+      console.log('Sleeper integration check response:', response);
+
+      if (response.result?.sleeper_user_id && response.result?.sleeper_league_id) {
+        setStatus('Sleeper integration found! You can skip setup or reconfigure.');
+        setActiveStep(2);
+        setSleeperStep('complete');
+        setIsLoading(false);
+
+        if (response.result.user_id) {
+          // Preserve existing auth store data (set by Supabase callback)
+          const currentAuth = useAuthStore.getState();
+          const currentUser = currentAuth.user;
+          const currentToken = currentAuth.token;
+
+          const updatedUser = {
+            id: response.result.user_id,
+            name: currentUser?.name || response.result.name || 'User',
+            email: currentUser?.email || 'user@example.com',
+            picture: currentUser?.picture,
+            fantasy_points: response.result.fantasy_points,
+            currency_balance_dollars: response.result.currency_balance_dollars
+          };
+          setAuth(updatedUser, currentToken || '', updatedUser.id);
         }
-      }).catch(console.error);
-      
-      router.push('/');
-    };
 
-         // Sleeper Integration Functions - matches test gateway exactly
-         const checkSleeperIntegrationStatus = async () => {
-           try {
-             setStatus('Checking Sleeper integration...');
-             const wsClient = getWebSocketClient();
-             
-             // Send account.info request to check sleeper integration status
-             const response = await wsClient.sendWithResponse({
-               id: 'check_sleeper_001',
-               method: 'account.info',
-               params: {}
-             });
-             
-             console.log('Sleeper integration check response:', response);
-             
-             if (response.result?.sleeper_user_id && response.result?.sleeper_league_id) {
-               // Sleeper integration is already complete - show option to skip or continue
-               setStatus('Sleeper integration found! You can skip setup or reconfigure.');
-               setActiveStep(2); // Move to Sleeper step
-               setSleeperStep('complete'); // Show completion state
-               setIsLoading(false);
-               
-               // Update user info with data from account.info response (preserve OAuth info)
-               if (response.result.user_id) {
-                 // Get existing user info from localStorage (preserves OAuth name/email)
-                 const existingUserStr = localStorage.getItem('waiver_exchange_user');
-                 let existingUser = { name: 'User', email: 'user@example.com' };
-                 if (existingUserStr) {
-                   try {
-                     existingUser = JSON.parse(existingUserStr);
-                   } catch (error) {
-                     console.error('Error parsing existing user data:', error);
-                   }
-                 }
-                 
-                 const updatedUser = {
-                   id: response.result.user_id,
-                   name: existingUser.name || response.result.name || 'User',
-                   email: existingUser.email || 'user@example.com', // Keep OAuth email, no email from account.info
-                   fantasy_points: response.result.fantasy_points,
-                   currency_balance_dollars: response.result.currency_balance_dollars
-                 };
-                 localStorage.setItem('waiver_exchange_user', JSON.stringify(updatedUser));
-                 setAuth(updatedUser, localStorage.getItem('waiver_exchange_token') || '', updatedUser.id);
-               }
-               
-               // Update Sleeper integration status in auth store
-               setSleeperSetup(
-                 response.result.sleeper_username || 'Unknown',
-                 response.result.sleeper_league_id,
-                 response.result.sleeper_roster_id || 'Unknown'
-               );
-               
-               // NO AUTO-REDIRECT - wait for user to click "Continue to Dashboard"
-             } else {
-               // Need Sleeper setup
-               setStatus('Sleeper integration required');
-               setActiveStep(2); // Move to Sleeper step
-               setSleeperStep('username');
-               setIsLoading(false);
-             }
-           } catch (error) {
-             console.error('Error checking Sleeper integration:', error);
-             setError('Failed to check Sleeper integration');
-             setStatus('Sleeper check failed');
-             setIsLoading(false);
-             setActiveStep(0);
-           }
-         };
+        setSleeperSetup(
+          response.result.sleeper_username || 'Unknown',
+          response.result.sleeper_league_id,
+          response.result.sleeper_roster_id || 'Unknown'
+        );
+      } else {
+        setStatus('Sleeper integration required');
+        setActiveStep(2);
+        setSleeperStep('username');
+        setIsLoading(false);
+      }
+    } catch (err) {
+      console.error('Error checking Sleeper integration:', err);
+      setError('Failed to check Sleeper integration');
+      setStatus('Sleeper check failed');
+      setIsLoading(false);
+      setActiveStep(0);
+    }
+  };
 
-         const setupSleeperIntegration = async () => {
-           if (!sleeperUsername.trim()) {
-             setError('Please enter your Sleeper username');
-             return;
-           }
+  const setupSleeperIntegration = async () => {
+    if (!sleeperUsername.trim()) {
+      setError('Please enter your Sleeper username');
+      return;
+    }
 
-           try {
-             setIsLoading(true);
-             setError(null);
-             setStatus('Setting up Sleeper integration...');
-             
-             const wsClient = getWebSocketClient();
-             
-             // Send setup_sleeper request - matches test gateway exactly
-             const response = await wsClient.sendWithResponse({
-               id: 'setup_sleeper_001',
-               method: 'account.setup_sleeper',
-               params: {
-                 sleeper_username: sleeperUsername.trim()
-               }
-             });
-             
-             console.log('Sleeper setup response:', response);
-             
-             if (response.result?.success) {
-               setStatus('Sleeper integration setup successful!');
-               setAvailableLeagues(response.result.leagues);
-               setSleeperStep('leagues');
-               setIsLoading(false);
-             } else {
-               setError(response.error?.message || 'Sleeper setup failed');
-               setStatus('Sleeper setup failed');
-               setIsLoading(false);
-             }
-           } catch (error) {
-             console.error('Error setting up Sleeper integration:', error);
-             setError('Failed to setup Sleeper integration');
-             setStatus('Sleeper setup failed');
-             setIsLoading(false);
-           }
-         };
+    try {
+      setIsLoading(true);
+      setError(null);
+      setStatus('Setting up Sleeper integration...');
 
-    const selectLeague = async (leagueId: string, rosterId: string, leagueName: string) => {
-      try {
-        setIsLoading(true);
-        setError(null);
-        setStatus(`Selecting league: ${leagueName}...`);
-        
-        const wsClient = getWebSocketClient();
-        
-        // Send select_league request - matches test gateway exactly
-        const response = await wsClient.sendWithResponse({
-          id: 'select_league_001',
-          method: 'account.select_league',
-          params: {
-            league_id: leagueId,
-            roster_id: rosterId
-          }
-        });
-        
-        console.log('League selection response:', response);
-        
-        if (response.result?.success) {
-          setStatus('League selected successfully!');
-          setSleeperSetup(sleeperUsername, leagueId, rosterId);
-          setActiveStep(3); // Complete
-          setSleeperStep('complete');
-          setIsLoading(false);
-          
-          // Redirect to main page after a short delay
-          setTimeout(() => {
-            router.push('/');
-          }, 1000);
-        } else {
-          setError(response.error?.message || 'League selection failed');
-          setStatus('League selection failed');
-          setIsLoading(false);
+      const wsClient = getWebSocketClient();
+
+      const response = await wsClient.sendWithResponse({
+        id: 'setup_sleeper_001',
+        method: 'account.setup_sleeper',
+        params: {
+          sleeper_username: sleeperUsername.trim()
         }
-      } catch (error) {
-        console.error('Error selecting league:', error);
-        setError('Failed to select league');
+      });
+
+      console.log('Sleeper setup response:', response);
+
+      if (response.result?.success) {
+        setStatus('Sleeper integration setup successful!');
+        setAvailableLeagues(response.result.leagues);
+        setSleeperStep('leagues');
+        setIsLoading(false);
+      } else {
+        setError(response.error?.message || 'Sleeper setup failed');
+        setStatus('Sleeper setup failed');
+        setIsLoading(false);
+      }
+    } catch (err) {
+      console.error('Error setting up Sleeper integration:', err);
+      setError('Failed to setup Sleeper integration');
+      setStatus('Sleeper setup failed');
+      setIsLoading(false);
+    }
+  };
+
+  const selectLeague = async (leagueId: string, rosterId: string, leagueName: string) => {
+    try {
+      setIsLoading(true);
+      setError(null);
+      setStatus(`Selecting league: ${leagueName}...`);
+
+      const wsClient = getWebSocketClient();
+
+      const response = await wsClient.sendWithResponse({
+        id: 'select_league_001',
+        method: 'account.select_league',
+        params: {
+          league_id: leagueId,
+          roster_id: rosterId
+        }
+      });
+
+      console.log('League selection response:', response);
+
+      if (response.result?.success) {
+        setStatus('League selected successfully!');
+        setSleeperSetup(sleeperUsername, leagueId, rosterId);
+        setActiveStep(3);
+        setSleeperStep('complete');
+        setIsLoading(false);
+
+        setTimeout(() => {
+          router.push('/');
+        }, 1000);
+      } else {
+        setError(response.error?.message || 'League selection failed');
         setStatus('League selection failed');
         setIsLoading(false);
       }
-    };
+    } catch (err) {
+      console.error('Error selecting league:', err);
+      setError('Failed to select league');
+      setStatus('League selection failed');
+      setIsLoading(false);
+    }
+  };
 
   return (
     <Container size="sm" py="xl">
@@ -426,12 +501,11 @@ export default function LoginPage() {
           <Stack gap="xl" style={{ minHeight: '450px' }}>
             {/* Header */}
             <div style={{ textAlign: 'center' }}>
-                {/* Placeholder Logo */}
                 <ActionIcon
                     size="xl"
                     radius="md"
                     variant="subtle"
-                    style={{ 
+                    style={{
                     margin: '0 auto 16px auto',
                     display: 'block',
                     width: '64px',
@@ -452,7 +526,7 @@ export default function LoginPage() {
                         }}
                     />
                 </ActionIcon>
-              
+
               <Title order={1} size="h2" mb="xs">
                 Sign in to The Waiver Exchange
               </Title>
@@ -465,21 +539,21 @@ export default function LoginPage() {
             </div>
 
             {/* Authentication Stepper */}
-            <Stepper 
-              active={activeStep} 
+            <Stepper
+              active={activeStep}
               onStepClick={setActiveStep}
               allowNextStepsSelect={false}
               size="sm"
               orientation="horizontal"
               style={{ width: '100%', flex: 1 }}
             >
-              <Stepper.Step 
-                label="Sign In" 
+              <Stepper.Step
+                label="Sign In"
                 description="Choose method"
                 icon={<IconUser size={16} />}
               >
                 <Stack gap="lg" mt="xs" style={{ minHeight: '200px', justifyContent: 'flex-end', paddingBottom: '45px' }}>
-                  {/* Google Sign-In Button - Following Google Branding Guidelines */}
+                  {/* Google Sign-In Button */}
                   <button
                     onClick={handleGoogleLogin}
                     disabled={isLoading}
@@ -513,7 +587,6 @@ export default function LoginPage() {
                       }
                     }}
                   >
-                    {/* Google G Logo */}
                     <svg width="20" height="20" viewBox="0 0 24 24">
                       <path
                         fill="#4285F4"
@@ -532,8 +605,7 @@ export default function LoginPage() {
                         d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"
                       />
                     </svg>
-                    
-                    {/* Button Text */}
+
                     <span>
                       {isLoading ? 'Authenticating...' : 'Sign in with Google'}
                     </span>
@@ -551,23 +623,23 @@ export default function LoginPage() {
                 </Stack>
               </Stepper.Step>
 
-              <Stepper.Step 
-                label="OAuth" 
+              <Stepper.Step
+                label="OAuth"
                 description="Google auth"
                 icon={<IconBrandGoogle size={16} />}
                 loading={activeStep === 1 && isLoading}
               >
                 <Stack gap="lg" mt="xl" style={{ minHeight: '200px', justifyContent: 'center' }}>
-                  <Alert 
+                  <Alert
                     icon={isLoading ? <Loader size="sm" /> : <IconCheck size="sm" />}
                     color={error ? 'red' : isLoading ? 'blue' : 'green'}
                     variant="light"
                   >
                     {status}
                   </Alert>
-                  
+
                   {error && (
-                    <Alert 
+                    <Alert
                       icon={<IconX size="sm" />}
                       color="red"
                       variant="light"
@@ -578,8 +650,8 @@ export default function LoginPage() {
                 </Stack>
               </Stepper.Step>
 
-              <Stepper.Step 
-                label="Sleeper" 
+              <Stepper.Step
+                label="Sleeper"
                 description="League setup"
                 icon={<IconShield size={16} />}
                 loading={activeStep === 2 && isLoading}
@@ -592,14 +664,14 @@ export default function LoginPage() {
                         setupSleeperIntegration();
                       }
                     }}>
-                      <Alert 
+                      <Alert
                         icon={<IconShield size="sm" />}
                         color="blue"
                         variant="light"
                       >
                         Please enter your Sleeper username to link your fantasy football account
                       </Alert>
-                      
+
                       <TextInput
                         label="Sleeper Username"
                         placeholder="Enter your Sleeper username"
@@ -608,7 +680,7 @@ export default function LoginPage() {
                         disabled={isLoading}
                         autoComplete="off"
                       />
-                      
+
                       <Button
                         type="submit"
                         loading={isLoading}
@@ -619,24 +691,24 @@ export default function LoginPage() {
                       </Button>
                     </form>
                   )}
-                  
+
                   {sleeperStep === 'leagues' && (
                     <>
-                      <Alert 
+                      <Alert
                         icon={<IconCheck size="sm" />}
                         color="green"
                         variant="light"
                       >
                         Select your league to complete the setup
                       </Alert>
-                      
+
                       <Stack gap="md">
                         {availableLeagues?.map((league) => (
                           <Paper
                             key={league.id}
                             p="md"
                             radius="md"
-                            style={{ 
+                            style={{
                               cursor: 'pointer',
                               border: '1px solid var(--mantine-color-default-border)',
                               transition: 'all 0.2s ease'
@@ -658,17 +730,17 @@ export default function LoginPage() {
                       </Stack>
                     </>
                   )}
-                  
+
                   {sleeperStep === 'complete' && (
                     <>
-                      <Alert 
+                      <Alert
                         icon={<IconCheck size="sm" />}
                         color="green"
                         variant="light"
                       >
                         {status}
                       </Alert>
-                      
+
                       <Button
                         onClick={handleContinueToDashboard}
                         fullWidth
@@ -679,9 +751,9 @@ export default function LoginPage() {
                       </Button>
                     </>
                   )}
-                  
+
                   {error && (
-                    <Alert 
+                    <Alert
                       icon={<IconX size="sm" />}
                       color="red"
                       variant="light"
@@ -692,24 +764,24 @@ export default function LoginPage() {
                 </Stack>
               </Stepper.Step>
 
-                     <Stepper.Completed>
-                       <Stack gap="lg" mt="xl" style={{ minHeight: '200px', justifyContent: 'center' }}>
-                         <Alert 
-                           icon={<IconCheck size="sm" />}
-                           color="green"
-                           variant="light"
-                         >
-                           {status}
-                         </Alert>
-                         
-                         <Text ta="center" c="dimmed">
-                           {status.includes('found') 
-                             ? 'Your Sleeper account is already connected. Redirecting to your dashboard...'
-                             : 'Welcome to The Waiver Exchange! Redirecting to your dashboard...'
-                           }
-                         </Text>
-                       </Stack>
-                     </Stepper.Completed>
+              <Stepper.Completed>
+                <Stack gap="lg" mt="xl" style={{ minHeight: '200px', justifyContent: 'center' }}>
+                  <Alert
+                    icon={<IconCheck size="sm" />}
+                    color="green"
+                    variant="light"
+                  >
+                    {status}
+                  </Alert>
+
+                  <Text ta="center" c="dimmed">
+                    {status.includes('found')
+                      ? 'Your Sleeper account is already connected. Redirecting to your dashboard...'
+                      : 'Welcome to The Waiver Exchange! Redirecting to your dashboard...'
+                    }
+                  </Text>
+                </Stack>
+              </Stepper.Completed>
             </Stepper>
 
             {/* Info */}
